@@ -1,0 +1,14 @@
+name: green_joker_scales_before_read
+comment: |
+  Green Joker at +2 Mult: the stage-2 update bumps it to +3 BEFORE the
+  stage-5 read (first-hand-reads-post-update convention).
+  Pair: chips 10+9+9 = 28, mult 2+3 = 5. 28 x 5 = 140.
+played: ["9S", "9H"]
+jokers:
+  - id: j_green_joker
+    state: {mult: 2}
+expected:
+  hand_type: PAIR
+  chips: 28
+  mult: 5
+  score: 140

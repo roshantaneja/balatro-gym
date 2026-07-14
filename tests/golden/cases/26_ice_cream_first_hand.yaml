@@ -1,0 +1,12 @@
+name: ice_cream_first_hand
+comment: |
+  Fresh Ice Cream gives the full +100 Chips on the first hand (wiki:
+  "the first hand will provide the full 100 chips, not 95").
+  Pair: chips 28+100 = 128, mult 2. 128 x 2 = 256.
+played: ["9S", "9H"]
+jokers: ["j_ice_cream"]
+expected:
+  hand_type: PAIR
+  chips: 128
+  mult: 2
+  score: 256

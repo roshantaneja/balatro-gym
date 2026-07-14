@@ -1,0 +1,11 @@
+name: hack_retriggers_fives
+comment: |
+  Hack retriggers each scored 2/3/4/5. Pair of 5s scored twice each:
+  chips 10 + (5+5)*2 = 30, mult 2. 30 x 2 = 60.
+played: ["5S", "5H"]
+jokers: ["j_hack"]
+expected:
+  hand_type: PAIR
+  chips: 30
+  mult: 2
+  score: 60

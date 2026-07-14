@@ -1,0 +1,14 @@
+name: wiki_order_example_additive_first
+comment: |
+  The wiki's canonical ordering example (Guide: Activation Sequence):
+  additive mult joker LEFT of xmult joker.
+  Full House 40 x 4; cards 9*3 + K*2 = 27+20 = 47 -> 87 chips.
+  Mult: (4 + 4) x 2 = 16.  87 x 16 = 1392.
+  (Swapped order gives 4x2+4 = 12 -> 1044; covered by unit tests.)
+played: ["9S", "9H", "9D", "KC", "KS"]
+jokers: ["j_joker", "j_duo"]
+expected:
+  hand_type: FULL_HOUSE
+  chips: 87
+  mult: 16
+  score: 1392

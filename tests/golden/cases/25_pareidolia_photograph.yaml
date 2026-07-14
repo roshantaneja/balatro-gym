@@ -1,0 +1,11 @@
+name: pareidolia_photograph
+comment: |
+  Pareidolia makes every card a face card, so Photograph's x2 fires on
+  the first scored 9. Pair: chips 28, mult 2 x2 = 4. 28 x 4 = 112.
+played: ["9S", "9H"]
+jokers: ["j_pareidolia", "j_photograph"]
+expected:
+  hand_type: PAIR
+  chips: 28
+  mult: 4
+  score: 112

@@ -1,0 +1,10 @@
+name: stone_always_scores
+comment: |
+  Stone card is excluded from detection (still a Pair) but always scores +50.
+  (10 + 18 + 50) x 2 = 156
+played: ["9S", "9H", "4D(stone)"]
+expected:
+  hand_type: PAIR
+  chips: 78
+  mult: 2
+  score: 156

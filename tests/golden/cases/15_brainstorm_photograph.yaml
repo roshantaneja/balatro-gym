@@ -1,0 +1,12 @@
+name: brainstorm_copies_photograph
+comment: |
+  Brainstorm (rightmost) copies leftmost Photograph: first face card gets
+  x2 twice (once from each, both firing on the first king's scoring pass).
+  Pair of kings: chips 10+10+10 = 30; mult 2 x2 x2 = 8. 30 x 8 = 240.
+played: ["KS", "KH"]
+jokers: ["j_photograph", "j_brainstorm"]
+expected:
+  hand_type: PAIR
+  chips: 30
+  mult: 8
+  score: 240

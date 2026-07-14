@@ -1,0 +1,12 @@
+name: baron_steel_stack
+comment: |
+  Held King with Steel: steel x1.5 fires, then Baron x1.5 on the same held card.
+  Pair 28 x 2; held KD(steel): x1.5 x1.5 -> mult 4.5. 28 x 4.5 = 126.
+played: ["9S", "9H"]
+held: ["KD(steel)"]
+jokers: ["j_baron"]
+expected:
+  hand_type: PAIR
+  chips: 28
+  mult: 4.5
+  score: 126

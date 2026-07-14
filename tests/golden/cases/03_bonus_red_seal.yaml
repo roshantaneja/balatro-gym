@@ -1,0 +1,11 @@
+name: bonus_red_seal
+comment: |
+  Red seal replays the whole per-card pipeline including the Bonus enhancement.
+  Pair base 10; 9S(bonus,red_seal) fires twice: (9+30)*2 = 78; 9H adds 9.
+  (10 + 78 + 9) x 2 = 194
+played: ["9S(bonus,red_seal)", "9H"]
+expected:
+  hand_type: PAIR
+  chips: 97
+  mult: 2
+  score: 194

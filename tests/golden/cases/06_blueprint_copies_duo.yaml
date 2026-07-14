@@ -1,0 +1,11 @@
+name: blueprint_copies_duo
+comment: |
+  Blueprint (slot 0) copies The Duo (slot 1): x2 applied twice.
+  Pair: chips 28, mult 2 x2 x2 = 8. 28 x 8 = 224.
+played: ["9S", "9H"]
+jokers: ["j_blueprint", "j_duo"]
+expected:
+  hand_type: PAIR
+  chips: 28
+  mult: 8
+  score: 224

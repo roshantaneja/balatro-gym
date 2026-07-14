@@ -1,0 +1,11 @@
+name: four_fingers_flush
+comment: |
+  Four Fingers: a 4-card spade Flush. Flush L1 = 35 x 4;
+  cards K+J+9+5 = 10+10+9+5 = 34. (35+34) x 4 = 276.
+played: ["KS", "JS", "9S", "5S"]
+jokers: ["j_four_fingers"]
+expected:
+  hand_type: FLUSH
+  chips: 69
+  mult: 4
+  score: 276

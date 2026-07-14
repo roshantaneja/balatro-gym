@@ -1,0 +1,13 @@
+name: saturn_straight_l2
+comment: |
+  Straight leveled once by Saturn (+30 chips, +3 mult per level):
+  L2 = 30+30 = 60 chips, 4+3 = 7 mult.
+  Cards A+K+Q+J+10 = 11+10+10+10+10 = 51.
+  (60 + 51) x 7 = 777
+played: ["AS", "KH", "QD", "JC", "10S"]
+hand_levels: {STRAIGHT: 2}
+expected:
+  hand_type: STRAIGHT
+  chips: 111
+  mult: 7
+  score: 777

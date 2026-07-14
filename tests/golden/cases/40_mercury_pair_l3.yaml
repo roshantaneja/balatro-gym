@@ -1,0 +1,12 @@
+name: mercury_pair_l3
+comment: |
+  Pair leveled twice by Mercury (+15 chips, +1 mult per level):
+  L3 = 10+2*15 = 40 chips, 2+2*1 = 4 mult.
+  Cards 9+9 = 18. (40 + 18) x 4 = 232
+played: ["9S", "9H"]
+hand_levels: {PAIR: 3}
+expected:
+  hand_type: PAIR
+  chips: 58
+  mult: 4
+  score: 232

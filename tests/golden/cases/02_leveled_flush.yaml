@@ -1,0 +1,12 @@
+name: leveled_flush
+comment: |
+  Flush L2 = 35+15 = 50 chips, 4+2 = 6 mult (Jupiter increments).
+  Cards K+J+9+5+2 = 10+10+9+5+2 = 36.
+  (50 + 36) x 6 = 516
+played: ["KS", "JS", "9S", "5S", "2S"]
+hand_levels: {FLUSH: 2}
+expected:
+  hand_type: FLUSH
+  chips: 86
+  mult: 6
+  score: 516

@@ -1,0 +1,12 @@
+name: mime_double_steel
+comment: |
+  Mime retriggers held-in-hand abilities: the Steel King fires twice.
+  Pair: chips 28, mult 2 x 1.5 x 1.5 = 4.5. floor(28 x 4.5) = 126.
+played: ["9S", "9H"]
+held: ["KD(steel)"]
+jokers: ["j_mime"]
+expected:
+  hand_type: PAIR
+  chips: 28
+  mult: 4.5
+  score: 126

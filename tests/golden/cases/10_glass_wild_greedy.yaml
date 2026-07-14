@@ -1,0 +1,14 @@
+name: glass_then_greedy_order
+comment: |
+  Enhancement fires before on-scored jokers within the same card pass:
+  glass x2 first, then greedy +3 on the same diamond.
+  Chips 28. Mult: 2 x2 (glass) +3 (greedy) = 7. 28 x 7 = 196.
+  (Wrong order would give (2+3)x2 = 10 -> 280.)
+seed: no-glass-break  # chance stream from this seed doesn't break the glass
+played: ["9D(glass)", "9H"]
+jokers: ["j_greedy"]
+expected:
+  hand_type: PAIR
+  chips: 28
+  mult: 7
+  score: 196

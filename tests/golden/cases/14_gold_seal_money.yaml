@@ -1,0 +1,11 @@
+name: gold_seal_money
+comment: |
+  Gold seal pays $3 when the card is played and scores.
+  Chips 10 + 9 + 9 = 28, mult 2 -> 56, money +3.
+played: ["9S(gold_seal)", "9H"]
+expected:
+  hand_type: PAIR
+  chips: 28
+  mult: 2
+  score: 56
+  money_delta: 3

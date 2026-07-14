@@ -1,0 +1,11 @@
+name: half_joker_small_hand
+comment: |
+  3 played cards -> Half Joker +20 mult. Pair scores only the two 9s.
+  (10 + 18) x (2 + 20) = 616
+played: ["9S", "9H", "4D"]
+jokers: ["j_half"]
+expected:
+  hand_type: PAIR
+  chips: 28
+  mult: 22
+  score: 616

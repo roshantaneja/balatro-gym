@@ -1,0 +1,10 @@
+name: popcorn_fresh
+comment: |
+  Fresh Popcorn: +20 Mult. Pair: chips 28, mult 2+20 = 22. 28 x 22 = 616.
+played: ["9S", "9H"]
+jokers: ["j_popcorn"]
+expected:
+  hand_type: PAIR
+  chips: 28
+  mult: 22
+  score: 616

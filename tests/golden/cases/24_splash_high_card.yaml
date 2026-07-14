@@ -1,0 +1,11 @@
+name: splash_high_card
+comment: |
+  Splash: every played card counts in scoring. High Card K + 9 + 4:
+  chips 5 + 10+9+4 = 28, mult 1. 28 x 1 = 28.
+played: ["KS", "9H", "4D"]
+jokers: ["j_splash"]
+expected:
+  hand_type: HIGH_CARD
+  chips: 28
+  mult: 1
+  score: 28

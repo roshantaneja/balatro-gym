@@ -1,0 +1,12 @@
+name: scholar_holo_ace
+comment: |
+  Per-card order: base chips -> edition -> on-scored jokers.
+  Pair of aces, AS is holo. Chips: 10 + (11+20) + (11+20) = 72.
+  Mult: 2 + 10 (holo) + 4 + 4 (scholar x2) = 20.  72 x 20 = 1440.
+played: ["AS(holo)", "AH"]
+jokers: ["j_scholar"]
+expected:
+  hand_type: PAIR
+  chips: 72
+  mult: 20
+  score: 1440

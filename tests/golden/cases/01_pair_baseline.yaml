@@ -1,0 +1,10 @@
+name: pair_baseline
+comment: |
+  Pair L1 = 10 chips x 2 mult. Cards 9+9 = 18 chips.
+  (10 + 18) x 2 = 56
+played: ["9S", "9H"]
+expected:
+  hand_type: PAIR
+  chips: 28
+  mult: 2
+  score: 56

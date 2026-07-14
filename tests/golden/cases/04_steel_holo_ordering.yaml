@@ -1,0 +1,12 @@
+name: steel_holo_ordering
+comment: |
+  Scored-card editions (stage 3) apply before held Steel (stage 4).
+  Chips 10+9+9 = 28. Mult: 2 + 10 (holo, stage 3) = 12, then x1.5 (steel) = 18.
+  28 x 18 = 504
+played: ["9S(holo)", "9H"]
+held: ["KD(steel)"]
+expected:
+  hand_type: PAIR
+  chips: 28
+  mult: 18
+  score: 504

@@ -1,0 +1,14 @@
+name: ride_the_bus_face_resets
+comment: |
+  Ride the Bus at +5 Mult; a pair of Kings scores face cards, so the
+  stage-2 update resets it to 0 and the stage-5 read adds nothing.
+  Pair of Kings: chips 10+10+10 = 30, mult 2. 30 x 2 = 60.
+played: ["KS", "KH"]
+jokers:
+  - id: j_ride_the_bus
+    state: {mult: 5}
+expected:
+  hand_type: PAIR
+  chips: 30
+  mult: 2
+  score: 60

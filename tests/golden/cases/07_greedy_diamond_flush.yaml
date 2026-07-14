@@ -1,0 +1,12 @@
+name: greedy_diamond_flush
+comment: |
+  Greedy fires per scored diamond (5x +3 mult).
+  Flush 35 x 4; cards 2+5+9+10+10 = 36 -> 71 chips; mult 4 + 15 = 19.
+  71 x 19 = 1349
+played: ["2D", "5D", "9D", "JD", "KD"]
+jokers: ["j_greedy"]
+expected:
+  hand_type: FLUSH
+  chips: 71
+  mult: 19
+  score: 1349
