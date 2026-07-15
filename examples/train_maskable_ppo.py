@@ -10,6 +10,11 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import sys
+from pathlib import Path
+
+# Allow running without an editable install (e.g. system python).
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 try:
     from sb3_contrib import MaskablePPO
@@ -35,12 +40,21 @@ def main() -> None:
 
     env = gym.make(args.env)
 
+    try:
+        import tensorboard  # noqa: F401
+
+        tb_log = "./tb"
+    except ImportError:
+        tb_log = None
+        print("tensorboard not installed - training without TB logging "
+              '(uv pip install tensorboard to enable)')
+
     model = MaskablePPO(
         "MultiInputPolicy",
         env,
         seed=args.seed,
         verbose=1,
-        tensorboard_log="./tb",
+        tensorboard_log=tb_log,
         n_steps=1024,
         batch_size=256,
         ent_coef=0.01,

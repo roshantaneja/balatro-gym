@@ -1,0 +1,19 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "watch-model",
+      "runtimeExecutable": ".venv/bin/python",
+      "runtimeArgs": ["scripts/watch.py", "--agent", "model", "--model", "ppo_balatro.zip"],
+      "port": 8712,
+      "autoPort": true
+    },
+    {
+      "name": "watch-heuristic",
+      "runtimeExecutable": ".venv/bin/python",
+      "runtimeArgs": ["scripts/watch.py", "--agent", "heuristic"],
+      "port": 8712,
+      "autoPort": true
+    }
+  ]
+}

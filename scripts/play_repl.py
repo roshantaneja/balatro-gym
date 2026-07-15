@@ -8,6 +8,11 @@ Commands: a number (action index), a legal-action list number like #3,
 from __future__ import annotations
 
 import argparse
+import sys
+from pathlib import Path
+
+# Allow running without an editable install (e.g. system python).
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import numpy as np
 

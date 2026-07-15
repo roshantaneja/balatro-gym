@@ -38,6 +38,10 @@ pytest                                     # 259 tests
 # play it yourself
 python scripts/play_repl.py --env full --seed 7
 
+# WATCH an agent play in the browser (heuristic, random, or a trained model)
+python scripts/watch.py                                  # http://localhost:8712
+python scripts/watch.py --agent model --model ppo_balatro.zip
+
 # random/heuristic baselines
 python - <<'PY'
 from balatro_gym.env.envs import BalatroEnv

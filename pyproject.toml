@@ -17,7 +17,14 @@ dev = [
     "gymnasium>=1.0",
     "numpy>=1.26",
 ]
-train = ["sb3-contrib>=2.4", "stable-baselines3>=2.4", "torch"]
+train = [
+    "sb3-contrib>=2.4",
+    "stable-baselines3>=2.4",
+    "torch",
+    "tensorboard",
+    "tqdm",
+    "rich",
+]
 
 [build-system]
 requires = ["hatchling"]

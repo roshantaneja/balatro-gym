@@ -7,7 +7,12 @@ from __future__ import annotations
 
 import argparse
 import random
+import sys
 import time
+from pathlib import Path
+
+# Allow running without an editable install (e.g. system python).
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 
 def bench_engine(n_steps: int) -> float:

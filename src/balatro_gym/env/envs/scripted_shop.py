@@ -48,7 +48,36 @@ def greedy_pack(env: "BalatroScriptedShopEnv", mask: np.ndarray) -> int:
     return codec.SKIP_PACK_IDX
 
 
+def strategist_shop(env: "BalatroScriptedShopEnv", mask: np.ndarray) -> int:
+    """Community-strategy shop (docs/strategy.md): tiered scaling-joker buys
+    under an interest reserve, decay selling, targeted rerolls."""
+    return _strategist()._shop_phase(env, mask)
+
+
+def strategist_pack(env: "BalatroScriptedShopEnv", mask: np.ndarray) -> int:
+    return _strategist()._pack_phase(env, mask)
+
+
+_STRATEGIST = None
+
+
+def _strategist():
+    global _STRATEGIST
+    if _STRATEGIST is None:
+        from ..baselines import StrategistAgent
+
+        _STRATEGIST = StrategistAgent()
+    return _STRATEGIST
+
+
 DEFAULT_CONTROLLERS: dict[str, Controller] = {
+    "blind_select": always_play_blind,
+    "shop": strategist_shop,
+    "pack_open": strategist_pack,
+}
+
+# The original naive controllers remain available:
+GREEDY_CONTROLLERS: dict[str, Controller] = {
     "blind_select": always_play_blind,
     "shop": greedy_shop,
     "pack_open": greedy_pack,

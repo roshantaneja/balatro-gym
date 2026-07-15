@@ -1,2 +1,38 @@
-balatro_wiki/*
+# --- Python -----------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# --- virtual envs -------------------------------------------------------------
+.venv/
+venv/
+
+# --- tooling caches -----------------------------------------------------------
+.pytest_cache/
+.hypothesis/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# --- training artifacts -------------------------------------------------------
+tb/
+runs/
+wandb/
+ppo_*.zip
+models/
+*.trajectories.json
+
+# --- wiki scrape (35MB, regenerable via the scraper) ---------------------------
+balatro_wiki/
 scrape_balatro_wiki.py
+
+# --- local editor/agent state --------------------------------------------------
+.claude/settings.local.json
+.claude/plans/
+.idea/
+.vscode/
+.DS_Store
