@@ -13,6 +13,7 @@ with pace-based discarding, since those have to be made ~100 times per run.
 from __future__ import annotations
 
 import random
+from typing import ClassVar
 
 import numpy as np
 
@@ -40,36 +41,35 @@ BOSSES_TO_REROLL = {"b_needle", "b_wall", "b_violet_vessel", "b_ox", "b_flint", 
 # used when valuing a purchase. Rough community-consensus rates for a
 # spam-hand build (4 hands / round, ~3 discards).
 GROWTH: dict[str, dict[str, float]] = {
-    "j_green_joker": {"mult": 3.0},
-    "j_ride_the_bus": {"mult": 2.5},
+    "j_green_joker": {"mult": 2.0},  # +1 per hand, -1 per discard
+    "j_ride_the_bus": {"mult": 2.0},  # resets on a scoring face card
     "j_castle": {"chips": 9.0},
     "j_wee": {"chips": 12.0},
     "j_runner": {"chips": 4.0},
-    "j_square": {"chips": 3.0},
-    "j_trousers": {"mult": 1.5},
-    "j_constellation": {"x": 0.12},
-    "j_hologram": {"x": 0.15},
-    "j_vampire": {"x": 0.08},
+    "j_square": {"chips": 12.0},  # pair spam is padded to 4 cards (see _with_fillers)
+    "j_trousers": {"mult": 0.5},  # two pair is rarely the spam hand
+    "j_constellation": {"x": 0.04},  # ~0.4 planets used per round
+    "j_hologram": {"x": 0.05},
+    "j_vampire": {"x": 0.04},  # needs enhanced cards to feed on
     "j_lucky_cat": {"x": 0.05},
     "j_glass": {"x": 0.05},
-    "j_campfire": {"x": 0.4},
-    "j_obelisk": {"x": 0.3},
+    "j_campfire": {"x": 0.1},  # resets after every boss
+    "j_obelisk": {"x": 0.05},  # resets whenever the spam hand is played
     "j_yorick": {"x": 0.15},
-    "j_madness": {"x": 0.6},
-    "j_ceremonial": {"mult": 1.0},
     "j_flash": {"mult": 1.0},
     "j_red_card": {"mult": 0.5},
-    "j_hit_the_road": {"x": 0.2},
     "j_rocket": {"dollars": 0.7},
     "j_loyalty_card": {},
     "j_egg": {},
+    # Not listed on purpose: Madness and Ceremonial Dagger destroy jokers,
+    # Hit the Road resets every round.
 }
 PROJECT_ROUNDS = 6
 
 # Expected dollars per round from economy jokers (rough averages for a
 # 4-hand round); converted into a power-equivalent bonus when valuing a buy.
 ECON_DOLLARS: dict[str, float] = {
-    "j_golden": 4.0, "j_rocket": 3.0, "j_to_the_moon": 2.5, "j_egg": 3.0, "j_gift": 2.0,
+    "j_golden": 4.0, "j_rocket": 1.5, "j_to_the_moon": 2.5, "j_egg": 1.5, "j_gift": 2.0,
     "j_cloud_9": 1.5, "j_delayed_grat": 3.0, "j_reserved_parking": 1.0, "j_business": 1.5,
     "j_satellite": 1.0, "j_mail_in": 2.0, "j_faceless": 0.5, "j_rough_gem": 1.5,
     "j_ticket": 0.5, "j_matador": 1.0, "j_todo_list": 1.0, "j_credit_card": 1.0,
@@ -88,10 +88,12 @@ class PlannerAgent(StrategistAgent):
                          HandType.FLUSH, HandType.HIGH_CARD, HandType.FULL_HOUSE)
 
     def __init__(self, seed: int = 0, samples: int = 5, top_k: int = 10,
-                 commit: HandType | None = HandType.PAIR, adaptive: bool = False):
+                 commit: HandType | None = HandType.PAIR, adaptive: bool = False,
+                 reserve_cap: int = 25):
         super().__init__(seed)
         self.samples = samples
         self.top_k = top_k
+        self.reserve_cap = reserve_cap  # money kept for interest in antes 2-6
         # The build's spam hand. Every planet, joker valuation and play
         # decision is aligned to it; the strongest hand is still played
         # whenever the spam hand would fall off pace. With `adaptive`, the
@@ -117,8 +119,12 @@ class PlannerAgent(StrategistAgent):
         if run.ante >= 8:
             return 0   # nothing after the last boss: spend it all
         if run.ante == 7:
-            return 12
-        return min(run.interest_cap, 25)
+            return min(self.reserve_cap, 12)
+        if run.ante == 2:
+            return min(self.reserve_cap, 10)  # a scoring board first, interest second
+        if run.ante == 3:
+            return min(self.reserve_cap, 15)
+        return min(run.interest_cap, self.reserve_cap)
 
     # ------------------------------------------------------------- simulation
     def _sim_rng(self, run, salt: str) -> random.Random:
@@ -190,6 +196,10 @@ class PlannerAgent(StrategistAgent):
             for key, rate in GROWTH.get(j.id, {}).items():
                 if key in j.state:
                     j.state[key] = j.state[key] + rate * PROJECT_ROUNDS
+            if j.id == "j_burnt":   # levels the first discarded hand each round
+                c.hand_levels[spam] += PROJECT_ROUNDS
+            if j.id == "j_space":   # 1 in 4 per played hand
+                c.hand_levels[spam] += PROJECT_ROUNDS  # ~4 hands x 1/4 per round
         return c
 
     def board_power(self, run, salt: str = "") -> float:
@@ -204,7 +214,7 @@ class PlannerAgent(StrategistAgent):
             self.commit = ht
             scores[ht] = self.power(proj, salt="commit", samples=4)
         best = max(scores, key=scores.get)
-        if current in scores and scores[best] < 1.10 * scores[current]:
+        if current in scores and scores[best] < 1.05 * scores[current]:
             best = current
         self.commit = best
         return best
@@ -223,7 +233,9 @@ class PlannerAgent(StrategistAgent):
         value = self.power(self.projected(trial), salt="base")  # same hands as the base
         dollars = ECON_DOLLARS.get(jid, 0.0) * min(rounds_left(run), 18)
         scoring = sum(1 for j in run.jokers if _classify(j.id) in ("add", "x", "retrig", "copy"))
-        if dollars and scoring >= 2:
+        if dollars and (scoring >= 2 or len(run.jokers) <= 1):
+            # Income matters once the board scores, and on an empty board
+            # where the first purchases are what the income buys.
             base = self.power(self.projected(run), salt="base")
             value += base * min(0.5, dollars * DOLLAR_TO_POWER)
         return value
@@ -234,13 +246,23 @@ class PlannerAgent(StrategistAgent):
             return 0.0
         trial = run.clone()
         trial.hand_levels[ht] += 1
-        return self.power(self.projected(trial), salt="base")
+        value = self.power(self.projected(trial), salt="base")
+        if self.adaptive and ht != self.commit and ht in self.COMMIT_CANDIDATES:
+            # Worth what it would be if the build moved onto this hand
+            # (discounted: switching forfeits the levels already bought).
+            saved = self.commit
+            self.commit = ht
+            try:
+                value = max(value, 0.9 * self.power(self.projected(trial), salt="base"))
+            finally:
+                self.commit = saved
+        return value
 
     def requirement(self, run, kind_mult: float = 2.0) -> float:
         return ante_base_chips(run.ante, run.stake) * run.mods.get("ante_scaling", 1) * kind_mult
 
     # (hands available, power multiplier) a boss effectively leaves us with
-    BOSS_HANDICAP = {
+    BOSS_HANDICAP: ClassVar[dict[str, tuple[int, float]]] = {
         "b_needle": (1, 1.0), "b_eye": (99, 0.6), "b_mouth": (99, 0.7), "b_psychic": (99, 0.8),
         "b_plant": (99, 0.75), "b_pillar": (99, 0.7), "b_head": (99, 0.8), "b_club": (99, 0.8),
         "b_goad": (99, 0.8), "b_window": (99, 0.8), "b_flint": (99, 0.6), "b_arm": (99, 0.85),
@@ -295,6 +317,8 @@ class PlannerAgent(StrategistAgent):
             if tag and tag.id == "t_double":
                 nxt = run.blind_tags[1] if run.blind_index == 0 else None
                 value = TAG_VALUE.get(nxt.id, 0) if nxt else 2
+            if tag and tag.id == "t_orbital" and tag.state.get("hand") == int(self._spam_hand(run)):
+                value = 10  # +3 levels on the build's hand
             threshold = 6 if run.blind_index == 0 else 8
             if value >= threshold:
                 hands = cardops.effective_hands(run)
@@ -312,7 +336,12 @@ class PlannerAgent(StrategistAgent):
             spam = self._spam_hand(run)
             counts = run.hand_play_counts
             total = max(1, sum(counts.values()))
-            if ht == spam or (self.commit is None and counts.get(ht, 0) / total >= 0.3):
+            movable = (
+                self.adaptive
+                and ht in self.COMMIT_CANDIDATES
+                and run.hand_levels[ht] + 1 >= run.hand_levels[spam]
+            )
+            if ht == spam or movable or (self.commit is None and counts.get(ht, 0) / total >= 0.3):
                 if run.mods.get("observatory") and ht == spam:
                     # Observatory: a held spam planet is x1.5 every hand. Keep
                     # them in the slots; only level up when the slots are full.
@@ -366,12 +395,19 @@ class PlannerAgent(StrategistAgent):
         boss_hands, boss_pen = self.boss_handicap(run.ante_boss)
         deficit = need / max(now * boss_pen * min(hands, boss_hands), 1.0)
 
+        behind = deficit > 1.0  # the ante's boss beats the board as it stands
+        scoring_jokers = sum(1 for j in run.jokers if _classify(j.id) in ("add", "x", "retrig", "copy"))
+
         def money_ok(cost: int, importance: float) -> bool:
-            left = run.money + cardops.debt_allowance(run) - cost
+            left = run.money - cost  # Credit Card debt is for emergencies only
             if importance >= 1.6 or dead_now:
                 return left >= -cardops.debt_allowance(run)  # build-defining, or dead anyway
             if importance >= 1.3:
-                return left >= reserve - 10
+                return left >= (0 if behind else reserve - 10)
+            if importance >= 1.12:
+                # A permanent +12% is worth a few rounds of reduced interest;
+                # when the boss is out of reach it is worth most of the bankroll.
+                return left >= (reserve - 15 if behind else reserve - 5)
             return left >= reserve
 
         best = (1.0, None, 0)  # (ratio, action, cost)
@@ -433,6 +469,10 @@ class PlannerAgent(StrategistAgent):
                     continue
                 options = PACKS[offer.pack_id].options
                 p_hit = 1.0 if run.mods.get("telescope") else 1 - (11 / 12) ** options
+                # A planet gamble before the first scoring joker spends the
+                # money the next shop's joker needs; only take it from surplus.
+                if p_hit < 1.0 and scoring_jokers == 0 and run.money - offer.cost < 8:
+                    continue
                 ratio = 1 + p_hit * (planet_ratio - 1)
                 if money_ok(offer.cost, ratio):
                     consider(ratio, idx, offer.cost)
@@ -481,6 +521,10 @@ class PlannerAgent(StrategistAgent):
                 vouchers.append((value, idx, VOUCHERS[vid].cost))
         if vouchers:
             value, idx, cost = max(vouchers)
+            if value >= 9 and run.money + cardops.debt_allowance(run) >= cost:
+                return idx  # the planet engine: buy on sight, whatever the reserve
+            if value >= 7 and run.money - cost >= reserve - 5:
+                return idx  # Director's Cut / Retcon: a boss reroll saves runs outright
             if value >= 5 and run.money - cost >= reserve + 8:
                 return idx
 
@@ -495,7 +539,9 @@ class PlannerAgent(StrategistAgent):
                 return idx
             if "buffoon" in pid and (left >= reserve or dead_now) and (len(run.jokers) < run.joker_slots or deficit > 0.5):
                 return idx
-            if "celestial" in pid and left >= reserve and run.stats.get("hands_played_run", 0) >= 4:
+            if "celestial" in pid and left >= reserve and run.stats.get("hands_played_run", 0) >= 4 and (
+                scoring_jokers > 0 or run.mods.get("telescope") or left >= 8
+            ):
                 return idx
             if "spectral" in pid and left >= reserve + 4:
                 return idx
@@ -506,9 +552,14 @@ class PlannerAgent(StrategistAgent):
         cost = 0 if shop.free_rerolls > 0 else shop.reroll_cost
         no_x = not any(_classify(j.id) == "x" for j in run.jokers)
         keep = 4  # always keep a cheap joker's price after a reroll
+        # Without a multiplicative joker the board cannot keep up with the
+        # requirement curve past ante 4: from ante 3 on, hunting for one is
+        # worth most of the interest reserve (keep a joker's price in hand).
+        hunting = (no_x and run.ante >= 3) or behind
         if mask[codec.REROLL_IDX] and (
             cost == 0
             or (dead_now and run.money - cost >= keep)  # dead anyway: spend everything
+            or (hunting and run.money - cost >= max(8, reserve - 15) and cost <= 9)
             or (deficit > 0.8 and run.money - cost >= max(keep, reserve - 5) and cost <= 9)
             or ((deficit > 0.3 or no_x) and run.money - cost >= max(keep, reserve) and cost <= 9)
             or (run.money - cost >= reserve + 15 and cost <= 10)
@@ -545,7 +596,8 @@ class PlannerAgent(StrategistAgent):
                 value = 3 if (card and str(card.enhancement) != "none") else 1
             if value > best[0]:
                 best = (value, idx)
-        if best[1] >= 0 and best[0] >= 3.5:
+        threshold = 3.0 if len(run.jokers) < 2 and pack.option_kinds and pack.option_kinds[0] == "joker" else 3.5
+        if best[1] >= 0 and best[0] >= threshold:
             return best[1]
         if mask[codec.SKIP_PACK_IDX]:
             return codec.SKIP_PACK_IDX
@@ -656,9 +708,9 @@ def _legal_discard(run, idxs) -> bool:
     return boss.validate_discard(run, [run.round.hand[i] for i in idxs]) is None
 
 
-def _best_play(run, top_k: int = 10):
-    """(score, indices) of the best legal play, scored for real on clones."""
-    best = (-1.0, None)
+def _best_plays(run, top_k: int = 10) -> list[tuple[float, tuple[int, ...]]]:
+    """Legal plays scored for real on clones, best first."""
+    out = []
     for _, idxs in _engine_candidates(run, top_k):
         if not _legal_play(run, idxs):
             continue
@@ -666,9 +718,15 @@ def _best_play(run, top_k: int = 10):
         played = [trial.round.hand[i] for i in idxs]
         trial.round.hand = [c for i, c in enumerate(trial.round.hand) if i not in set(idxs)]
         res = score_play(trial, played, held=trial.round.hand)
-        if res.score > best[0]:
-            best = (res.score, idxs)
-    return best
+        out.append((res.score, idxs))
+    out.sort(key=lambda t: -t[0])
+    return out
+
+
+def _best_play(run, top_k: int = 10):
+    """(score, indices) of the best legal play, scored for real on clones."""
+    plays = _best_plays(run, top_k)
+    return plays[0] if plays else (-1.0, None)
 
 
 def _simple_discard(run) -> tuple[int, ...] | None:
@@ -763,12 +821,76 @@ def rollout_clear(run, first_action, rng: random.Random, top_k: int = 8) -> floa
             if d is not None:
                 round_mod.discard(sim, d)
                 continue
-        round_mod.play_hand(sim, tuple(sorted(play)))
+        round_mod.play_hand(sim, _with_fillers(sim, tuple(sorted(play))))
     if sim.phase != Phase.GAME_OVER and (sim.round is None or sim.round.chips_scored >= sim.round.chips_needed):
         return 1.0
     if sim.round is None:
         return 0.0
     return min(0.95, sim.round.chips_scored / max(sim.round.chips_needed, 1.0))
+
+
+def _with_fillers(run, idxs: tuple[int, ...]) -> tuple[int, ...]:
+    """Pad a small play (high card / pair / trips) with junk cards that will
+    not score, so they are redrawn: a free discard. Keeps held-card assets
+    (steel, gold, seals, Baron / Shoot the Moon faces, paired ranks and a
+    flush draw), respects Half Joker (<= 3 cards) and Square Joker (4), and
+    falls back to the original play unless the padded one scores at least
+    as much."""
+    from collections import Counter
+
+    rnd = run.round
+    if rnd is None or len(idxs) >= 5:
+        return idxs
+    if rnd.boss_id in ("b_tooth", "b_serpent"):
+        return idxs  # The Tooth charges per card played; The Serpent redraws only three
+    cards = rnd.hand
+    rules = fold_eval_rules(run)
+    played = [cards[i] for i in idxs]
+    hr = evaluate_hand(played, rules)
+    if hr.hand_type not in (HandType.HIGH_CARD, HandType.PAIR, HandType.THREE_KIND):
+        return idxs
+    owned = {j.id for j in run.jokers}
+    limit = 5
+    if "j_square" in owned:
+        limit = 4
+    if "j_half" in owned:
+        limit = 3
+    if len(idxs) >= limit:
+        return idxs
+    held = [i for i in range(len(cards)) if i not in idxs]
+    rank_counts = Counter(int(cards[i].rank) for i in held if not cards[i].is_stone)
+    played_ranks = {int(c.rank) for c in played if not c.is_stone}
+    suits = Counter(cards[i].suit for i in held if not cards[i].is_stone)
+    draw_suit = next((su for su, n in suits.items() if n >= 4), None)
+    keep_faces = bool(owned & {"j_baron", "j_shoot_the_moon"})
+
+    def junk(i: int) -> bool:
+        c = cards[i]
+        if c.is_stone:
+            return True  # stones score when played, whatever the hand
+        if str(c.enhancement) in ("steel", "gold") or str(c.seal) != "none":
+            return False
+        r = int(c.rank)
+        if r in played_ranks or rank_counts[r] >= 2:
+            return False
+        if keep_faces and r in (12, 13):
+            return False
+        return draw_suit is None or c.suit != draw_suit
+
+    fillers = sorted((i for i in held if junk(i)), key=lambda i: (not cards[i].is_stone, int(cards[i].rank)))
+    fillers = fillers[: limit - len(idxs)]
+    if not fillers:
+        return idxs
+    padded = tuple(sorted(idxs + tuple(fillers)))
+    if not _legal_play(run, padded):
+        return idxs
+    base_score = score_play(run.clone(), played, held=[cards[i] for i in held]).score
+    trial = run.clone()
+    new_played = [trial.round.hand[i] for i in padded]
+    new_held = [c for i, c in enumerate(trial.round.hand) if i not in set(padded)]
+    if score_play(trial, new_played, held=new_held).score + 1e-9 < base_score:
+        return idxs
+    return padded
 
 
 def _committed_choice(self, env, mask: np.ndarray) -> int | None:
@@ -808,25 +930,54 @@ def _planner_play_phase(self, env, mask: np.ndarray) -> int:
     if base_choice is None:
         base_choice = StrategistAgent._play_phase(self, env, mask)
     kind, payload = codec.decode_kind(base_choice)
+    if kind not in ("play", "discard"):
+        return base_choice  # the strategist used a consumable or sold something
     need = rnd.chips_needed - rnd.chips_scored
-    if rnd.discards_left == 0 or rnd.hands_left == 0:
-        return base_choice
+    if rnd.hands_left == 0:
+        return _pad_action(env, mask, base_choice)
     # Engine-level view of the strategist's choice.
     engine_idxs = tuple(sorted(env._hand_order[p] for p in payload))
-    best_score, best_play = _best_play(run, self.top_k)
-    if best_play is None or best_score >= need:
-        return base_choice
-    options: list[tuple[str, tuple[int, ...], int]] = [("play", best_play, None)]
-    if kind == "discard":
+    plays = _best_plays(run, self.top_k)
+    if not plays:
+        return _pad_action(env, mask, base_choice)
+    best_score, _best_play = plays[0]
+    if best_score >= need:
+        return _pad_action(env, mask, base_choice)
+    at_risk = best_score * rnd.hands_left < 1.5 * need
+    if not at_risk or (rnd.discards_left == 0 and len(plays) < 2):
+        return _pad_action(env, mask, base_choice)
+    # Arbitrate the top plays (and the discard shapes when discards remain)
+    # by rollouts of the rest of the blind.
+    options: list[tuple[str, tuple[int, ...], int]] = [("play", idxs, None) for _, idxs in plays[:3]]
+    if kind == "play" and engine_idxs not in {o[1] for o in options}:
+        options.append(("play", engine_idxs, base_choice))
+    if rnd.discards_left == 0:
+        pass
+    elif kind == "discard":
         options.append(("discard", engine_idxs, base_choice))
-    simple = _simple_discard(run)
-    if simple is not None and simple != engine_idxs:
-        options.append(("discard", simple, None))
-    seen_d = {o[1] for o in options if o[0] == "discard"}
-    for d in _draw_discards(run):
-        if d not in seen_d:
-            options.append(("discard", d, None))
-            seen_d.add(d)
+    if rnd.discards_left > 0 and rnd.discards_used == 0 and any(j.id == "j_burnt" for j in run.jokers):
+        from collections import Counter
+
+        counts = Counter(c.rank for c in rnd.hand if not c.is_stone)
+        pairs = sorted((r for r, n in counts.items() if n >= 2), key=int)
+        if pairs:
+            low = [i for i, c in enumerate(rnd.hand) if not c.is_stone and c.rank == pairs[0]][:2]
+            d = tuple(sorted(low))
+            if _legal_discard(run, d):
+                remap = {eng: slot for slot, eng in enumerate(env._hand_order)}
+                subset = tuple(sorted(remap[i] for i in d))
+                sidx = codec._SUBSET5_INDEX.get(subset)
+                if sidx is not None and mask[codec.DISCARD_BASE + sidx]:
+                    return codec.DISCARD_BASE + sidx
+    if rnd.discards_left > 0:
+        simple = _simple_discard(run)
+        if simple is not None and simple != engine_idxs:
+            options.append(("discard", simple, None))
+        seen_d = {o[1] for o in options if o[0] == "discard"}
+        for d in _draw_discards(run):
+            if d not in seen_d:
+                options.append(("discard", d, None))
+                seen_d.add(d)
     rng = self._sim_rng(run, f"roll:{rnd.hands_left}:{rnd.discards_left}:{len(rnd.hand)}")
     scores = []
     seeds = [rng.random() for _ in range(self.rollouts)]  # common random numbers
@@ -835,14 +986,36 @@ def _planner_play_phase(self, env, mask: np.ndarray) -> int:
     pick = max(range(len(options)), key=lambda i: (scores[i], i == 0))
     okind, idxs, action = options[pick]
     if action is not None:
-        return action
+        return _pad_action(env, mask, action)
     remap = {eng: slot for slot, eng in enumerate(env._hand_order)}
     subset = tuple(sorted(remap[i] for i in idxs))
     base = codec.PLAY_BASE if okind == "play" else codec.DISCARD_BASE
     sidx = codec._SUBSET5_INDEX.get(subset)
     if sidx is not None and mask[base + sidx]:
-        return base + sidx
-    return base_choice
+        return _pad_action(env, mask, base + sidx)
+    return _pad_action(env, mask, base_choice)
+
+
+def _pad_action(env, mask: np.ndarray, action: int) -> int:
+    """Encode `action` with junk fillers added when it is a play (see
+    `_with_fillers`); any other action is returned unchanged."""
+    kind, payload = codec.decode_kind(action)
+    if kind != "play":
+        return action
+    run = env.run
+    idxs = tuple(sorted(env._hand_order[p] for p in payload))
+    padded = _with_fillers(run, idxs)
+    if padded == idxs:
+        return action
+    remap = {eng: slot for slot, eng in enumerate(env._hand_order)}
+    try:
+        subset = tuple(sorted(remap[i] for i in padded))
+    except KeyError:
+        return action
+    sidx = codec._SUBSET5_INDEX.get(subset)
+    if sidx is not None and mask[codec.PLAY_BASE + sidx]:
+        return codec.PLAY_BASE + sidx
+    return action
 
 
 PlannerAgent._play_phase = _planner_play_phase

@@ -102,22 +102,23 @@ obs, reward, terminated, truncated, info = env.step(action)
   mode adds capped, ante-weighted score-progress deltas. Pluggable via
   `RewardConfig`.
 
-## Baseline results (White stake, Red Deck, 100 seeds)
+## Baseline results (White stake, Red Deck, 100 seeds; planner 120)
 
 | agent | win rate | mean ante | sec / episode |
 |---|---|---|---|
 | random | 0% | 1.0 | 0.01 |
 | greedy heuristic | 0% | 3.5 | 1.2 |
 | strategist | 5% | 4.5 | 1.3 |
-| planner (pair build) | 10% | 5.4 | ~12 |
+| planner (pair build) | 16% (19/120) | 6.1 | ~40 |
 
-None of the baselines beats the game reliably yet. The planner never loses
-ante 1 any more and reaches ante 8 in a quarter of runs; what kills it is
-boss blinds at antes 4-7 (The Wall, The Psychic, The Eye) on boards whose
-measured power is 20-40% short. Its diagnostics point at where the gap is:
-started with $100 instead of $4 it wins 22% of runs (mean ante 6.4), and its
-winning boards share deep spam-hand levels plus one xMult joker. See
-`docs/strategy.md` for the measured levers and every variant that was tried.
+None of the baselines beats the game reliably yet. The planner almost never
+loses before ante 4 and reaches ante 8 in a third of runs; what kills it is
+antes 5-7 on boards that never found a multiplicative joker (56% of its
+losses have none) or deep spam-hand levels (losers average pair level 3.6,
+winners 8.6). See `docs/strategy.md` for the measured levers and every
+variant that was tried; `python scripts/eval_agents.py --agent planner
+--seeds 120 --workers 4` reproduces the table (per-seed boards, levels,
+money and the losing blind are printed for diagnosis).
 `examples/train_maskable_ppo.py` prints every baseline next to a trained policy.
 
 ## Architecture

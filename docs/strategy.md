@@ -117,6 +117,21 @@ every board-shaping judgment with a measurement on cloned engine state:
 - **Endgame rollouts**: when the best play cannot clear the blind and
   discards remain, "play now" and candidate discards are compared by short
   greedy rollouts on cloned state and the option with the most clears wins.
+- **Free card cycling**: a pair (or high card / trips) is played together
+  with the junk cards that cannot score, so they are redrawn — the same
+  trick players use to see more cards per round. Steel/gold/sealed cards,
+  paired ranks, flush draws and Baron/Shoot-the-Moon faces stay in hand;
+  Half Joker caps the play at 3 cards, Square Joker pads to exactly 4; the
+  padding is skipped under The Tooth (pays per card) and The Serpent.
+- **xMult hunting**: a board without a multiplicative joker cannot follow
+  the requirement curve past ante 4, so from ante 3 the agent rerolls for
+  one down to ~$10 instead of sitting on the interest cap, and the reserve
+  itself ramps ($0 → $10 → $15 → $25) so the first scoring jokers are
+  bought before interest is farmed.
+- **Graded spending**: a purchase that raises measured power ≥12% may dip
+  below the reserve; ≥30% may spend the bankroll when the ante's boss is
+  out of reach; ≥60% always. Boss-reroll vouchers (Director's Cut, Retcon)
+  are bought near the reserve, Telescope/Observatory on sight.
 
 It costs ~30 s per full run on one core, which is fine for a benchmark floor
 and for generating expert trajectories, but not for inner-loop RL.
@@ -130,7 +145,10 @@ and for generating expert trajectories, but not for inner-loop RL.
 | planner, adaptive commitment | 40 | 0-2.5% | 4.6-4.9 |
 | planner, pair commitment (first version) | 100 | 4% | 4.7 |
 | planner, pair commitment, $100 start (diagnostic) | 40 | 22% | 6.4 |
-| planner, current default | 100 | 10% | 5.4 |
+| planner, pair commitment, graded spending | 100 | 10% | 5.4 |
+| + free card cycling, corrected scaler growth table | 60 | 17% | 6.2 |
+| + xMult hunting rerolls, reserve ladder (current default) | 120 | 16% | 6.1 |
+| current default with a $15 interest reserve instead of $25 | 120 | 16% | 6.1 |
 
 Things that did not move the needle within noise (40 seeds each): an
 interest-first reserve ($25 from ante 4), economy-joker valuation (expected
@@ -145,6 +163,13 @@ in antes 7-8, value-per-dollar shop ranking with buffoon packs valued by
 sampling the pool, draw-chasing discard options in the endgame rollouts
 (no more ante-1 losses), boss-aware requirement estimates with Director's
 Cut rerolls of killer bosses, and no commitment under The Eye / The Mouth.
+
+Where the current default dies: 56% of its losses never found a
+multiplicative joker (the shop offers one in ~15% of two-slot views, so a
+run sees about three, half of them conditional), and losers average pair
+level 3.6 against 8.6 for winners. Variants that made no difference at 120
+seeds: the interest reserve cap ($15 vs $25) and adaptive hand commitment
+(it picks Pair on nearly every seed).
 
 The next step that the diagnostics justify is not more hand tuning but
 learning: use the planner to generate expert-labelled shop decisions and
