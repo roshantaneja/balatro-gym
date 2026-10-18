@@ -156,10 +156,16 @@ and for generating expert trajectories, but not for inner-loop RL.
 | + 40 endgame rollouts (was 10), four play options | 120 | 20% | 6.2 |
 | + at-risk trigger at 2x pace, 80 rollouts on boss blinds | 120 | 20% | 6.2 |
 | + premium skip tags gated on the next blind only | 120 | 18% | 6.2 |
-| + never reroll below the interest reserve (current default) | 120 | 26% | 6.5 |
+| + never reroll below the interest reserve (current default), seeds 0-119 | 120 | 26% | 6.5 |
+| current default, fresh seeds 120-239 | 120 | 15% | 6.1 |
+| **current default, all 240 seeds** | 240 | **20%** | 6.3 |
 | same, economy jokers valued at 2x and Investment/Economy tags premium | 120 | 22% | 6.4 |
-| same plus the full $25 reserve from ante 2 | 120 | 21% | 6.4 |
+| same plus the full $25 reserve from ante 2 (with / without the above) | 120 | 21% / 13% | 6.4 / 6.2 |
 | current default, $100 start (diagnostic) | 60 | 57% | 7.3 |
+
+Seed-to-seed variance is large: the same agent scores 26% on seeds 0-119
+and 15% on seeds 120-239, so differences under ~8 points at 120 seeds are
+noise. Every variant since the 40-rollout change sits in that band.
 
 Things that did not move the needle within noise (40 seeds each): an
 interest-first reserve ($25 from ante 4), economy-joker valuation (expected
@@ -180,12 +186,12 @@ multiplicative joker (the shop offers one in ~15% of two-slot views, so a
 run sees about three, half of them conditional), and losers average pair
 level 4.6 against 10.5 for winners. Money is the bottleneck, not judgment:
 started with $100 instead of $4 the same agent wins 57% of runs, earning
-$285 per run and spending $178 of it on rerolls (31 per run) against $180
-earned and 12 rerolls from a $4 start. Spending policies that dip below
-the interest reserve to hunt for an xMult earlier all measured worse than
-holding the reserve and rerolling from the surplus; valuing economy jokers
-higher did not help either, and adaptive hand commitment picks Pair on
-nearly every seed.
+$285 per run and spending $178 of it on rerolls (31 per run) against $160
+earned and 11 rerolls from a $4 start. No spending policy closes that gap:
+hunting below the interest reserve, holding the full reserve from ante 2,
+per-dollar purchase thresholds and higher economy-joker valuations all
+measure within noise of, or below, the default; adaptive hand commitment
+picks Pair on nearly every seed.
 
 The in-round play policy is not exhausted. Replaying every lost blind of a
 120-seed run from its first hand (`scripts/replay_losses.py`: snapshot the

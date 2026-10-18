@@ -102,14 +102,14 @@ obs, reward, terminated, truncated, info = env.step(action)
   mode adds capped, ante-weighted score-progress deltas. Pluggable via
   `RewardConfig`.
 
-## Baseline results (White stake, Red Deck, 100 seeds; planner 120)
+## Baseline results (White stake, Red Deck, 100 seeds; planner 240)
 
 | agent | win rate | mean ante | sec / episode |
 |---|---|---|---|
 | random | 0% | 1.0 | 0.01 |
 | greedy heuristic | 0% | 3.5 | 1.2 |
 | strategist | 5% | 4.5 | 1.3 |
-| planner (pair build) | 26% (31/120) | 6.5 | ~60 |
+| planner (pair build) | 20% (49/240) | 6.3 | ~60 |
 
 None of the baselines beats the game reliably yet. The planner almost never
 loses before ante 4 and reaches ante 8 in a third of runs; what kills it is
