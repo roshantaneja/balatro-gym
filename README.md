@@ -34,10 +34,13 @@ what was verified and where judgment calls were made.
   - `balatro_gym/BalatroScriptedShop-v0` — full runs, strategist auto-shop and
     auto-blind-select; the agent only plays hands.
   - `balatro_gym/Balatro-v0` — the whole game (`deck=`, `stake=` kwargs).
-- **Baselines**: `RandomLegalAgent`, greedy `HeuristicAgent`, and `StrategistAgent`
-  — a community-strategy agent aware of the full catalog (joker tiers and
+- **Baselines**: `RandomLegalAgent`, greedy `HeuristicAgent`, `StrategistAgent`
+  (a community-strategy agent aware of the full catalog: joker tiers and
   ordering classes, skip-tag values, voucher priorities, consumable usage with
-  target selection, pace-based discarding, boss rerolls). Numbers below.
+  target selection, pace-based discarding, boss rerolls) and `PlannerAgent`
+  (simulation-based: every shop, ordering, planet and skip decision is scored
+  by measuring the board's hand-scoring power on cloned engine state, with
+  rollout arbitration for endgame discards). Numbers below.
 
 ## Quickstart
 
@@ -106,10 +109,15 @@ obs, reward, terminated, truncated, info = env.step(action)
 | random | 0% | 1.0 | 0.01 |
 | greedy heuristic | 0% | 3.5 | 1.2 |
 | strategist | 5% | 4.5 | 1.3 |
+| planner (pair build) | 4% | 4.7 | ~10 |
 
-`docs/strategy.md` explains the doctrine the strategist codifies and the levers
-to tune; `examples/train_maskable_ppo.py` prints all three baselines next to a
-trained policy.
+None of the baselines beats the game reliably yet. The planner's diagnostics
+point at where the gap is: started with $100 instead of $4 it wins 22% of runs
+(mean ante 6.4), and its winning boards share deep spam-hand levels (9-18
+planets on the pair) plus one xMult joker. Money and planet access, not play
+quality, are the binding constraints for a scripted agent; see
+`docs/strategy.md` for the measured levers and the variants that were tried.
+`examples/train_maskable_ppo.py` prints every baseline next to a trained policy.
 
 ## Architecture
 

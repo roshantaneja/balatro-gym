@@ -79,6 +79,9 @@ def main() -> None:
     print("random baseline:   ", evaluate(raw, RandomLegalAgent(), seeds=20).summary())
     print("heuristic baseline:", evaluate(raw, HeuristicAgent(), seeds=20).summary())
     print("strategist baseline:", evaluate(raw, StrategistAgent(), seeds=20).summary())
+    from balatro_gym.env.planner import PlannerAgent
+
+    print("planner baseline:   ", evaluate(raw, PlannerAgent(), seeds=20).summary())
 
 
 if __name__ == "__main__":

@@ -499,7 +499,7 @@ class StrategistAgent(HeuristicAgent):
         if cardops.consumables_used_slots(run) >= run.consumable_slots:
             for i, inst in enumerate(run.consumables[:codec.N_CONSUMABLE_SLOTS]):
                 idx = codec.SELL_CONSUMABLE_BASE + i
-                if mask[idx] and self._consumable_value(env, inst) <= 1.0 and inst.id not in PLANET_HAND:
+                if mask[idx] and self._consumable_value(env, inst) <= 1.0:
                     return idx
         return None
 

@@ -95,3 +95,51 @@ adapted to the full content catalog. These rules drive `StrategistAgent` in
 - Obelisk + spam hand (resets whenever the most-played hand is played)
 - Blueprint left of Vampire (the copy eats enhancements without growing)
 - Castle wants discards / Green Joker hates them: prefer Green side
+
+## PlannerAgent: measuring instead of guessing
+
+`balatro_gym/env/planner.py` keeps the strategist's play policy but replaces
+every board-shaping judgment with a measurement on cloned engine state:
+
+- **Power** = the mean best-play score over K hands dealt from the run's own
+  deck, scored with the real pipeline, on a board where scaling jokers have
+  been projected a few rounds ahead (`GROWTH` table).
+- **Shop**: each joker on offer is valued by the power ratio after adding it
+  (or after replacing the joker whose removal costs least when the board is
+  full); planets by the ratio after levelling their hand. Anything under +3%
+  is not bought; rerolls continue while the projected board cannot beat the
+  next boss and money allows.
+- **Ordering**: adjacent swaps are kept when they raise measured power.
+- **Build commitment**: the agent commits to one spam hand (Pair by default).
+  Valuation only counts spam-hand plays, off-build planets are sold, and the
+  play policy plays the spam hand whenever it clears the blind or keeps pace,
+  falling back to the strongest hand otherwise.
+- **Endgame rollouts**: when the best play cannot clear the blind and
+  discards remain, "play now" and candidate discards are compared by short
+  greedy rollouts on cloned state and the option with the most clears wins.
+
+It costs ~30 s per full run on one core, which is fine for a benchmark floor
+and for generating expert trajectories, but not for inner-loop RL.
+
+### Measured results (White stake, Red Deck)
+
+| variant | n | win rate | mean ante |
+|---|---|---|---|
+| strategist | 100 | 5% | 4.5 |
+| planner, greedy play, no commitment | 40 | 0% | 4.6 |
+| planner, adaptive commitment | 40 | 0-2.5% | 4.6-4.9 |
+| planner, pair commitment | 100 | 4% | 4.7 |
+| planner, pair commitment, $100 start (diagnostic) | 40 | 22% | 6.4 |
+
+Things that did not move the needle within noise (40 seeds each): an
+interest-first reserve ($25 from ante 4), economy-joker valuation (expected
+dollars as a power bonus), celestial-pack valuation by expected spam-planet
+gain, relaxed skip-for-tag rules, stricter joker replacement thresholds.
+Things that did: structural candidate generation (10x faster, same decisions),
+paired sampling for valuations (removed noise-driven purchases), rollout
+partial credit (stopped single-card plays at ante 1), pair commitment.
+
+The next step that the diagnostics justify is not more hand tuning but
+learning: use the planner to generate expert-labelled shop decisions and
+train the shop/skip policy, or run a proper search (one-ante lookahead over
+shop sequences) where the simulation budget allows.

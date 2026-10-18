@@ -58,6 +58,10 @@ class ModelAgent:
 
 
 def make_agent(name: str, model_path: str | None):
+    if name == "planner":
+        from balatro_gym.env.planner import PlannerAgent
+
+        return PlannerAgent()
     if name == "strategist":
         from balatro_gym.env.baselines import StrategistAgent
 
@@ -370,8 +374,8 @@ def main():
     import os
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--agent", choices=["heuristic", "strategist", "random", "model"],
-                        default="strategist")
+    parser.add_argument("--agent", choices=["heuristic", "strategist", "planner", "random", "model"],
+                        default="planner")
     parser.add_argument("--deck", default="d_red", help="deck id, e.g. d_red, d_plasma")
     parser.add_argument("--stake", default="white", help="white|red|green|black|blue|purple|orange|gold")
     parser.add_argument("--model", default=None, help="path to MaskablePPO .zip")
