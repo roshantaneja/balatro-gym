@@ -162,6 +162,7 @@ and for generating expert trajectories, but not for inner-loop RL.
 | same, economy jokers valued at 2x and Investment/Economy tags premium | 120 | 22% | 6.4 |
 | same plus the full $25 reserve from ante 2 (with / without the above) | 120 | 21% / 13% | 6.4 / 6.2 |
 | + joker synergies (Constellation uses every planet, Campfire sells junk, Hologram buys standard packs) | 240 | 18% | 6.2 |
+| + cash skip tags (Handy, Garbage, Investment, Economy, Speed) valued at their payout | 240 | 20% | 6.2 |
 | current default, $100 start (diagnostic) | 60 | 57% | 7.3 |
 
 Seed-to-seed variance is large: the same agent scores 26% on seeds 0-119
@@ -207,6 +208,16 @@ same agent with 40 rollouts instead of 10 clears 13 of 102 lost blinds on
 every attempt, and a perfect-information greedy oracle clears 20 — so the
 rollout budget was raised (10% → 20% win rate came from this and the shop
 changes above). Widening the at-risk trigger further did not add to it.
+
+A state-value model was also tried: 1,357 blind-select states from 77
+runs (money, measured power against the ante's boss, pair level, xMult
+count, ante) fitted by logistic regression to the run outcome. Power
+margin (increasingly with ante), pair level and xMult count carry the
+signal; money held at blind select has a slightly negative coefficient,
+so such a model cannot supply the money-versus-power exchange rate the
+shop would need — the value of money is in what it buys, which the state
+does not show. Cash skip tags valued at their actual payout raise income
+from $152 to $168 per run without changing the win rate.
 
 The next step that the diagnostics justify is not more hand tuning but
 learning: use the planner to generate expert-labelled shop decisions and

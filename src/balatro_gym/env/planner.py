@@ -333,6 +333,25 @@ class PlannerAgent(StrategistAgent):
                 value = 10  # +3 levels on the build's hand
             if tag and tag.id == "t_meteor" and run.mods.get("telescope"):
                 value = 8  # a Mega Celestial pack with Telescope: two spam planets
+            # Cash tags pay what the run has accumulated; a skip forfeits the
+            # blind reward, the interest cash-out and the unused-hand dollars.
+            cash = 0
+            if tag and tag.id == "t_handy":
+                cash = run.stats.get("hands_played_run", 0)
+            elif tag and tag.id == "t_garbage":
+                cash = run.stats.get("discards_unused_run", 0)
+            elif tag and tag.id == "t_economy":
+                cash = min(max(run.money, 0), 40)
+            elif tag and tag.id == "t_investment":
+                cash = 25
+            elif tag and tag.id == "t_speed":
+                cash = 5 * (run.stats.get("blinds_skipped", 0) + 1)
+            if cash:
+                forfeit = (3 if run.blind_index == 0 else 4) + min(max(run.money, 0) // 5, 5) + 2
+                if cash - forfeit >= 30:
+                    value = max(value, 10)
+                elif cash - forfeit >= 15:
+                    value = max(value, 8)
             threshold = 6 if run.blind_index == 0 else 8
             if value >= threshold:
                 hands = cardops.effective_hands(run)
