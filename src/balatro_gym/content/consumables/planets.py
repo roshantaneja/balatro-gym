@@ -18,7 +18,7 @@ from balatro_gym.engine.effects import (
     register_consumable,
 )
 from balatro_gym.engine.state import RunState
-from balatro_gym.engine.types import ConsumableKind, HandType, SECRET_HANDS
+from balatro_gym.engine.types import SECRET_HANDS, ConsumableKind, HandType
 
 PLANET_BASE_COST = 3
 

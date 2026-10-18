@@ -1,73 +1,97 @@
 # Balatro strategy notes (for heuristics and reward design)
 
-Distilled from community consensus (primarily DrBoomMD's "How to Win Chips and
-Influence Mult" guide — Completionist+, ~119h — plus thread replies from other
-gold-stake players), adapted to the v1 content catalog. These rules drive
-`StrategistAgent` in `balatro_gym/env/baselines.py`.
+Distilled from community consensus (gold-stake guides and thread replies),
+adapted to the full content catalog. These rules drive `StrategistAgent` in
+`balatro_gym/env/baselines.py`; the tables there (`JOKER_INFO`, `TAG_VALUE`,
+`VOUCHER_VALUE`, `HARD_BOSSES`) are the knobs to tune.
 
 ## Core doctrine: score with jokers, not hands
 
 1. **The flush fallacy.** Flushes are the best ante-1 hand but a trap as a
-   strategy: hard to find (≤1-2 per round), no jokers scale them, and many
+   strategy: hard to find (≤1-2 per round), few jokers scale them, and many
    bosses (suit debuffs, The Water, The Arm, The Eye) counter them.
 2. **Scaling is king.** The most run-winning jokers gain value every hand or
-   round: Supernova, Green Joker, Ride the Bus, Castle (chips), plus xmult
-   scalers outside v1 (Constellation, Vampire, Campfire, Hologram).
-   A winning board ≈ **1 big-chip joker + 1-2 +mult jokers + 1-2 xmult jokers**.
-3. **High Card / Pair spam.** Joker builds don't care what hand you play, so
+   round: Supernova, Green Joker, Ride the Bus, Castle, Wee Joker (chips/mult),
+   and the xMult scalers — Constellation, Vampire, Hologram, Campfire, Obelisk,
+   Lucky Cat, Glass Joker, Yorick, Canio. A winning board ≈ **1 big-chip joker
+   + 1-2 +mult jokers + 1-2 xMult jokers (+ a retrigger or copy)**.
+3. **One xMult early.** Without a multiplicative joker a board stalls around
+   ante 5-6 (requirements 11k-35k). The strategist treats the first xMult
+   joker of tier ≥3 as an always-buy and rerolls for one when rich.
+4. **High Card / Pair spam.** Joker builds don't care what hand you play, so
    play the cheapest hand every turn: it triggers per-hand scalers 4x/round,
-   levels one hand type deeply, and shrugs off most boss effects.
-   Corollaries: Half Joker (≤3 cards) and The Duo (contains Pair) become
-   near-unconditional; Ride the Bus wants *no scoring face cards* (face cards
-   may still be PLAYED if they don't score); Green Joker wants *no discards*.
-4. **Tempo vs scaling.** Tempo jokers (flat +mult/+chips, decaying jokers like
-   Ice Cream/Popcorn/Gros Michel) exist to survive antes 1-3 while scalers
-   grow. Buy them early, sell them late when slots are needed.
-5. **Joker order matters**: +mult before xmult (left to right). (v1 heuristic
-   cannot reorder; buy order approximates it.)
+   levels one hand type deeply, and shrugs off most boss effects. Corollaries:
+   Half Joker (≤3 cards) and The Duo (contains Pair) become near-unconditional;
+   Ride the Bus wants *no scoring face cards*; Green Joker wants *no discards*;
+   Obelisk wants you to AVOID your most played hand (anti-synergy with spam).
+5. **Tempo vs scaling.** Tempo jokers (flat +mult/+chips, decaying jokers like
+   Ice Cream/Popcorn/Gros Michel/Seltzer/Ramen) exist to survive antes 1-3
+   while scalers grow. Buy them early, sell them late when slots are needed.
+6. **Joker order matters**: +chips/+mult before xMult (left to right);
+   retriggers left of xMult; Blueprint directly left of its target; the best
+   joker leftmost for Brainstorm. The strategist bubble-sorts the board with
+   adjacent swaps in the shop and at blind select.
 
 ## Economy doctrine
 
-6. **Interest is a build engine.** +$1 per $5 held, capped at $5/round ($25).
-   Reach and stay above $25 as fast as possible; each round at cap ≈ one free
-   reroll or half a pack.
-7. **Early spending exception**: high-tempo or premium scaling jokers are
-   worth dipping below the cap in antes 1-2; nearly nothing else is.
-8. **Rerolls > speculative packs** when no committed build. Celestial packs
-   only pay with a committed hand type (or Constellation); tarot packs are
-   good value if they don't break the interest threshold; buffoon packs are
-   almost always worth it early.
-9. **The Hermit doubles money (max +$20)** — best used at $20+; Temperance
-   pays total joker sell value (max $50) — best with a full board.
-10. **Skips**: mostly play small blinds for the money + shop visit; skip only
-    for premium tags (not in v1's tag set) — so v1: never skip.
+7. **Interest is a build engine, but scoring comes first.** +$1 per $5 held,
+   capped at $5/round ($25; Seed Money/Money Tree raise it). The strategist
+   keeps no reserve through ante 3, $5 at antes 4-5, $10 after — a joker or a
+   planet for the spam hand is worth more than a dollar of interest early.
+8. **Economy jokers are slots.** Golden Joker, Rocket, To the Moon, Egg, Gift
+   Card and friends are fine on an empty board; once two scoring jokers are
+   down they drop to tier 1 and get sold for upgrades.
+9. **Rerolls > speculative packs** when no committed build. Celestial packs
+   only pay with a committed hand type (or Telescope); Buffoon packs are
+   almost always worth it early; Arcana/Spectral packs once there is spare money.
+10. **The Hermit doubles money (max +$20)** — best used at $15+; Temperance
+    pays total joker sell value (max $50) — best with a full board.
+11. **Vouchers** are permanent but slow: buy Overstock, Grabber, Clearance Sale,
+    Paint Brush, Antimatter, Seed Money and Telescope/Observatory when money
+    is $10 above the reserve; skip Blank, Magic Trick, Hieroglyph.
 
 ## Planet doctrine
 
-11. Planets scale linearly while blind requirements scale super-exponentially:
-    strong early, weak late. Level the ONE hand you spam (Pair/High Card);
-    levels on hands you don't play are wasted money.
+12. Planets scale linearly while blind requirements scale super-exponentially:
+    strong early, weak late. Level the ONE hand you spam; levels on hands you
+    don't play are wasted money. From Celestial packs take the spam-hand planet,
+    otherwise the planet of a hand you play ≥25% of the time, otherwise skip.
 
-## v1 catalog tiering (43 jokers; for shop priority)
+## Skipping and bosses
 
-- **S (buy always, dip below reserve):** j_supernova, j_green_joker,
-  j_ride_the_bus, j_castle (scalers) · j_duo (x2 on pair-spam) · j_blueprint,
-  j_brainstorm (copy the best scaler/xmult)
-- **A (buy if half-reserve stays):** j_space (levels spam hand), j_photograph,
-  j_half, j_sly, j_banner (chips), j_hack (retrigger low ranks, pairs with
-  low-rank spam), j_golden (economy)
-- **B (buy early / cheap):** j_joker, j_jolly, j_abstract, j_scholar,
-  j_odd_todd, j_fortune_teller, j_bloodstone, j_mime, j_dusk, j_baron
-- **C (tempo only, antes 1-3):** j_ice_cream, j_popcorn, j_gros_michel,
-  j_business, suit jokers (j_greedy/…), j_shoot_the_moon, j_raised_fist,
-  j_mail_in, j_8ball, j_egg
-- **D (situational/avoid):** j_baseball (needs 2+ uncommons), j_dna, j_splash,
-  j_four_fingers, j_pareidolia (breaks Ride the Bus: every card becomes a
-  scoring face)
+13. **Skips**: play Small Blinds for the money and the shop visit; skip only
+    for premium tags (Negative, Polychrome, Rare, Holographic, Voucher, Charm,
+    Buffoon, Ethereal, Investment, Top-up) and only when the board clearly
+    beats the next blind (strategist: estimated hand score x hands ≥ 2.5x the
+    boss requirement, never at ante 1).
+14. **Boss rerolls** (Director's Cut / Retcon) are for run-killers: The Needle,
+    The Wall, The Ox, The Eye, The Arm, The Flint, Crimson Heart, Violet Vessel.
+15. **Mr. Bones** is insurance, **Chicot** turns bosses off, **Luchador** is a
+    one-shot boss cancel: hold them for the boss you fear.
+
+## Consumable usage (strategist defaults)
+
+- Planets: spam hand immediately; others only to unclog slots.
+- Hermit at $15+, Temperance with $8+ of joker sell value, Fool/High Priestess/
+  Emperor/Judgement/Wheel of Fortune on sight, Black Hole/The Soul always.
+- Enhancement tarots and seals go on paired or spam-rank cards; Strength on
+  pairs; suit converters on off-suit high cards; Hanged Man thins the lowest
+  singletons early; Death copies the best card over the worst.
+- Ankh/Hex only with a single premium joker; Ectoplasm when hand size ≥8;
+  Immolate with ≥2 hands left; Wraith when broke.
+
+## Discard doctrine
+
+16. Discard when the best play is off pace (`best < remaining / hands_left`)
+    and does not clear the blind outright; Green Joker halves that threshold.
+    Keep pairs, 4-flushes and open straights; dump the lowest singletons first.
+    Joker-aware: Castle's suit and Mail-In's rank go first, Hit the Road wants
+    Jacks, Faceless wants three faces at once, Yorick wants volume.
 
 ## Anti-synergies the agent must respect
 
 - Pareidolia + Ride the Bus (all cards are faces → RTB never scales)
 - Green Joker + discard-hungry play (each discard = -1 mult)
-- Castle wants discards / Green Joker hates them: prefer Green side (guide
-  consensus: don't discard unless the hand is truly dead)
+- Obelisk + spam hand (resets whenever the most-played hand is played)
+- Blueprint left of Vampire (the copy eats enhancements without growing)
+- Castle wants discards / Green Joker hates them: prefer Green side

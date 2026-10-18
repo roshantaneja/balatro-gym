@@ -234,18 +234,23 @@ let selected = new Set();        // canonical hand slots selected by the human
 let legal = new Set();           // legal global action indices
 let lastState = null;
 
-/* ---- action codec mirror (must match env/action_codec.py) ---- */
+/* ---- action codec mirror: layout is served by the watch server (s.codec) ---- */
 const SUBSETS5 = [], SUBSETS3 = [], S5_INDEX = {}, S3_INDEX = {};
-for (let m = 1; m < 256; m++){
-  const k = m.toString(2).replace(/0/g,"").length;
-  if (k <= 5){ S5_INDEX[m] = SUBSETS5.length; SUBSETS5.push(m); }
-  if (k <= 3){ S3_INDEX[m] = SUBSETS3.length; SUBSETS3.push(m); }
+let HAND_SLOTS = 0;
+function buildSubsets(n){
+  if (n === HAND_SLOTS) return;
+  HAND_SLOTS = n;
+  SUBSETS5.length = 0; SUBSETS3.length = 0;
+  for (const k in S5_INDEX) delete S5_INDEX[k];
+  for (const k in S3_INDEX) delete S3_INDEX[k];
+  for (let m = 1; m < (1 << n); m++){
+    const k = m.toString(2).replace(/0/g,"").length;
+    if (k <= 5){ S5_INDEX[m] = SUBSETS5.length; SUBSETS5.push(m); }
+    if (k <= 3){ S3_INDEX[m] = SUBSETS3.length; SUBSETS3.push(m); }
+  }
 }
-const A = {
-  SELECT_BLIND: 0, SKIP_BLIND: 1, PLAY: 2, DISCARD: 220, TARGET: 438,
-  USE_CONSUMABLE: 530, SELL_JOKER: 533, BUY_CARD: 539, BUY_PACK: 542,
-  VOUCHER: 544, REROLL: 545, LEAVE: 546, PICK_PACK: 547, SKIP_PACK: 552,
-};
+const A = {};
+function loadCodec(c){ Object.assign(A, c); buildSubsets(c.hand_slots); }
 const selMask = () => [...selected].reduce((m,s) => m | (1<<s), 0);
 const playIdx = () => { const m = selMask(); return m in S5_INDEX ? A.PLAY + S5_INDEX[m] : -1; };
 const discardIdx = () => { const m = selMask(); return m in S5_INDEX ? A.DISCARD + S5_INDEX[m] : -1; };
@@ -292,7 +297,9 @@ function renderActionBar(s){
   if (!manual || s.terminal) return;
   if (s.phase === "blind_select"){
     bar.appendChild(abtn("PLAY BLIND", A.SELECT_BLIND, "primary"));
-    bar.appendChild(abtn("SKIP BLIND", A.SKIP_BLIND));
+    const tag = s.blind_tags && s.blind_tags[s.blind_index];
+    bar.appendChild(abtn("SKIP BLIND" + (tag ? " → " + tag.replace(/^t_/,"") : ""), A.SKIP_BLIND));
+    if (legal.has(A.REROLL_BOSS)) bar.appendChild(abtn("REROLL BOSS $10", A.REROLL_BOSS));
   } else if (s.phase === "playing"){
     bar.appendChild(abtn(`PLAY HAND (${selected.size})`, playIdx(), "primary"));
     bar.appendChild(abtn(`DISCARD (${selected.size})`, discardIdx(), "danger"));
@@ -301,7 +308,6 @@ function renderActionBar(s){
   } else if (s.phase === "shop"){
     bar.appendChild(abtn(`REROLL $${s.shop ? s.shop.reroll_cost : "?"}`, A.REROLL));
     bar.appendChild(abtn("NEXT ROUND", A.LEAVE, "primary"));
-    if (s.shop && s.shop.voucher) bar.appendChild(abtn("BUY VOUCHER $10", A.VOUCHER));
   } else if (s.phase === "pack_open"){
     bar.appendChild(abtn("SKIP PACK", A.SKIP_PACK));
   }
@@ -309,6 +315,7 @@ function renderActionBar(s){
 
 function render(s){
   lastState = s;
+  if (s.codec) loadCodec(s.codec);
   legal = new Set(s.legal || []);
   window.lastKind = (s.last_action || "").startsWith("discard") ? "discard" : "play";
   $("agentline").textContent = `${s.agent} agent · seed ${s.seed}` + (manual ? " · HUMAN AT THE WHEEL" : "");
@@ -332,7 +339,10 @@ function render(s){
                     : ["small","big","boss"][Math.min(s.blind_index,2)]);
   disc.textContent = s.terminal ? (s.episode_stats && s.episode_stats.win ? "WON" : "LOST")
                     : BLIND_NAMES[Math.min(s.blind_index,2)];
-  $("bossname").textContent = s.boss || (BLIND_NAMES[Math.min(s.blind_index,2)].toLowerCase()+" blind");
+  $("bossname").textContent = (s.boss ? s.boss + (s.boss_disabled ? " (disabled)" : "")
+                               : (BLIND_NAMES[Math.min(s.blind_index,2)].toLowerCase()+" blind"))
+                               + (s.ante_boss && !s.boss ? " · boss: " + s.ante_boss : "")
+                               + (s.stake && s.stake !== "white" ? " · " + s.stake + " stake" : "");
 
   $("scored").textContent = fmt(s.chips_scored);
   $("needed").textContent = "/ " + fmt(s.chips_needed);
@@ -354,9 +364,13 @@ function render(s){
     const st = Object.entries(j.state).map(([k,v]) => `${k}:${v}`).join(" ");
     const sellIdx = A.SELL_JOKER + i;
     const canSell = manual && legal.has(sellIdx);
+    const swapIdx = A.SWAP_JOKERS + i;
+    const canSwap = manual && legal.has(swapIdx);
+    const tags = (j.stickers || []).concat(j.debuffed ? ["debuffed"] : []).join(" ");
     el.innerHTML = `<div class="name">${j.id.replace(/^j_/,"").replace(/_/g," ")}</div>
-      <div class="meta">$${j.sell}${j.edition ? " · "+j.edition : ""}${st ? "<br>"+st : ""}${canSell ? "<br>· click to sell ·" : ""}</div>`;
+      <div class="meta">$${j.sell}${j.edition ? " · "+j.edition : ""}${tags ? " · "+tags : ""}${st ? "<br>"+st : ""}${canSell ? "<br>· click to sell ·" : ""}${canSwap ? " <span class='swap' title='swap right'>⇄</span>" : ""}</div>`;
     if (canSell){ el.classList.add("clickable"); el.onclick = () => act(sellIdx); }
+    if (canSwap){ const sw = el.querySelector(".swap"); if (sw) sw.onclick = (ev) => { ev.stopPropagation(); act(swapIdx); }; }
     jr.appendChild(el);
   });
   for (let i = s.jokers.length; i < s.joker_slots; i++){
@@ -370,9 +384,12 @@ function render(s){
     const el = document.createElement("div"); el.className = "consumable";
     const useIdx = A.USE_CONSUMABLE + i;
     const canUse = manual && legal.has(useIdx);
-    el.innerHTML = `<div class="name">${c.id.replace(/^c_/,"").replace(/_/g," ")}</div>
-      <div class="meta sub">${c.kind}${canUse ? " · click to use" : ""}</div>`;
+    const sellIdx = A.SELL_CONSUMABLE + i;
+    const canSell = manual && legal.has(sellIdx);
+    el.innerHTML = `<div class="name">${c.id.replace(/^c_/,"").replace(/_/g," ")}${c.negative ? " (neg)" : ""}</div>
+      <div class="meta sub">${c.kind}${canUse ? " · click to use" : ""}${canSell ? " <span class='swap' title='sell'>$</span>" : ""}</div>`;
     if (canUse){ el.classList.add("clickable"); el.onclick = () => act(useIdx); }
+    if (canSell){ const sw = el.querySelector(".swap"); if (sw) sw.onclick = (ev) => { ev.stopPropagation(); act(sellIdx); }; }
     cr.appendChild(el);
   });
   $("cslots").textContent = `(${s.consumables.length}/${s.consumable_slots})`;
@@ -385,7 +402,7 @@ function render(s){
 
   // shop
   const shop = $("shop");
-  if (s.shop && (s.phase === "shop" || s.phase === "pack_open")){
+  if (s.shop && (s.phase === "shop" || s.phase === "pack_open" || (s.phase === "target" && s.shop.open_pack))){
     shop.className = "shop panel active";
     $("reroll").textContent = s.shop.reroll_cost;
     const si = $("shopitems"); si.innerHTML = "";
@@ -393,7 +410,7 @@ function render(s){
       const el = document.createElement("div"); el.className = "shopitem";
       const idx = A.BUY_CARD + i, can = manual && legal.has(idx);
       el.innerHTML = `<div class="name">${it.id.replace(/^[jc]_/,"").replace(/_/g," ")}</div>
-        <div class="cost">$${it.cost} · ${it.kind}${it.edition ? " · "+it.edition : ""}${can ? " · buy" : ""}</div>`;
+        <div class="cost">$${it.cost} · ${it.kind}${it.edition ? " · "+it.edition : ""}${(it.stickers||[]).length ? " · "+it.stickers.join(" ") : ""}${can ? " · buy" : ""}</div>`;
       if (manual) el.classList.add(can ? "clickable" : "unbuyable");
       if (can) el.onclick = () => act(idx);
       si.appendChild(el);
@@ -406,14 +423,14 @@ function render(s){
       if (can) el.onclick = () => act(idx);
       si.appendChild(el);
     });
-    if (s.shop.voucher){
+    (s.shop.vouchers || []).forEach((v, i) => {
       const el = document.createElement("div"); el.className = "shopitem";
-      const can = manual && legal.has(A.VOUCHER);
-      el.innerHTML = `<div class="name">${s.shop.voucher.replace(/^v_/,"").replace(/_/g," ")}</div><div class="cost">$10 · voucher${can ? " · buy" : ""}</div>`;
+      const idx = A.VOUCHER + i, can = manual && legal.has(idx);
+      el.innerHTML = `<div class="name">${v.replace(/^v_/,"").replace(/_/g," ")}</div><div class="cost">$10 · voucher${can ? " · buy" : ""}</div>`;
       if (manual) el.classList.add(can ? "clickable" : "unbuyable");
-      if (can) el.onclick = () => act(A.VOUCHER);
+      if (can) el.onclick = () => act(idx);
       si.appendChild(el);
-    }
+    });
     const pa = $("packarea"); pa.innerHTML = "";
     if (s.shop.open_pack){
       const p = s.shop.open_pack;
@@ -424,7 +441,7 @@ function render(s){
         if (o.card){ el = cardEl(o.card); }
         else {
           el = document.createElement("div"); el.className = "shopitem";
-          el.innerHTML = `<div class="name">${o.id.replace(/^[jc]_/,"").replace(/_/g," ")}</div><div class="cost">${o.kind}</div>`;
+          el.innerHTML = `<div class="name">${o.id.replace(/^[jc]_/,"").replace(/_/g," ")}</div><div class="cost">${o.kind}${o.edition && o.edition !== "none" ? " · " + o.edition : ""}</div>`;
         }
         const idx = A.PICK_PACK + i;
         if (manual && legal.has(idx)){ el.classList.add("clickable"); el.onclick = () => act(idx); }

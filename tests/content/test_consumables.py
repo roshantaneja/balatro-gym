@@ -16,7 +16,6 @@ from balatro_gym.engine import (
     PlayHand,
     Rank,
     Seal,
-    SelectBlind,
     Suit,
     UseConsumable,
     hand_value,
@@ -25,7 +24,6 @@ from balatro_gym.engine import (
 )
 from balatro_gym.engine.effects import PLANET_FOR_HAND
 from balatro_gym.engine.types import SECRET_HANDS
-
 from tests.helpers import cards, joker, make_run
 
 PLANET_IDS = {
@@ -126,7 +124,7 @@ def test_blue_seal_creates_planet_of_final_hand():
     g = new_blind_scenario("blue-seal", hand_levels={HandType.HIGH_CARD: 30})
     rnd = g.run.round
     rnd.hand[3].seal = Seal.BLUE  # held (not played) at end of round
-    events = g.apply(PlayHand((0,)))  # single card => HIGH_CARD
+    g.apply(PlayHand((0,)))  # single card => HIGH_CARD
     assert g.run.round is None  # blind cleared
     assert [c.id for c in g.run.consumables] == ["c_pluto"]
     assert g.run.consumables[0].kind == ConsumableKind.PLANET
@@ -303,7 +301,7 @@ def test_targeted_tarot_through_game():
     assert UseConsumable(0, (0, 1, 2)) in acts
 
     targets = [rnd.hand[i] for i in (0, 1, 2)]
-    events = g.apply(UseConsumable(0, (0, 1, 2)))
+    g.apply(UseConsumable(0, (0, 1, 2)))
     assert all(c.suit == Suit.HEARTS for c in targets)
     assert g.run.consumables == []  # consumed
     assert g.run.stats["tarots_used"] == 1

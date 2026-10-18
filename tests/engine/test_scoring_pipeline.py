@@ -4,7 +4,6 @@ Expected numbers are hand-derived from wiki rules; derivations in comments.
 """
 
 from balatro_gym.engine import HandType, score_play
-
 from tests.helpers import cards, joker, make_run
 
 

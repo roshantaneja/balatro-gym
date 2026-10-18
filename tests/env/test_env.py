@@ -5,21 +5,23 @@ import numpy as np
 import pytest
 
 import balatro_gym.env  # noqa: F401  (registers envs, loads content)
+import tests.helpers  # noqa: F401
 from balatro_gym.env import action_codec as codec
 from balatro_gym.env.envs import BalatroBlindEnv, BalatroEnv, BalatroScriptedShopEnv
-
-import tests.helpers  # noqa: F401
 
 
 class TestCodec:
     def test_subset_counts(self):
-        assert len(codec.SUBSETS_5) == 218
-        assert len(codec.SUBSETS_3) == 92
-        assert codec.N_ACTIONS == 556
+        from math import comb
+
+        n = codec.HAND_SLOTS
+        assert len(codec.SUBSETS_5) == sum(comb(n, k) for k in range(1, 6))
+        assert len(codec.SUBSETS_3) == sum(comb(n, k) for k in range(1, 4))
+        assert codec.N_ACTIONS == codec.SKIP_PACK_IDX + 1
 
     def test_decode_covers_all_indices(self):
         kinds = [codec.decode_kind(i)[0] for i in range(codec.N_ACTIONS)]
-        assert kinds.count("reserved") == 3
+        assert kinds.count("reserved") == 0
         assert kinds[0] == "select_blind"
         assert kinds[codec.PLAY_BASE] == "play"
         assert kinds[codec.SKIP_PACK_IDX] == "skip_pack"

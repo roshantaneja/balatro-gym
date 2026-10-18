@@ -40,3 +40,7 @@ pythonpath = ["src", "."]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+
+[tool.ruff.lint.per-file-ignores]
+# engine/__init__.py re-exports the engine API (``__all__`` is built from dir()).
+"src/balatro_gym/engine/__init__.py" = ["F401"]

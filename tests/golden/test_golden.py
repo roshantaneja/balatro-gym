@@ -10,7 +10,6 @@ import pytest
 import yaml
 
 from balatro_gym.engine import HandType, score_play
-
 from tests.helpers import cards, joker, make_run
 
 CASES_DIR = Path(__file__).parent / "cases"

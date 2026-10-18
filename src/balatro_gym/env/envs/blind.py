@@ -6,8 +6,8 @@ transfer; only the initial-state factory and termination differ.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Callable
 
 from balatro_gym.engine import BlindCleared, BlindKind, HandType, Phase, new_blind_scenario
 
@@ -20,20 +20,23 @@ class ScenarioConfig:
     ante: int = 1
     blind_kind: BlindKind = BlindKind.SMALL
     deck: str = "d_red"
+    stake: str = "white"
     joker_ids: tuple[str, ...] = ()
     hand_levels: dict = field(default_factory=dict)
     hands: int | None = None
     discards: int | None = None
     money: int = 4
+    boss_id: str | None = None  # only used when blind_kind is BOSS
 
 
-def default_scenario_sampler(np_random) -> ScenarioConfig:
-    """Randomized curriculum: early antes, occasional jokers/levels."""
-    from balatro_gym.engine import JOKERS
+def default_scenario_sampler(np_random, *, max_ante: int = 3, bosses: bool = True) -> ScenarioConfig:
+    """Randomized curriculum: early antes, occasional jokers/levels, random
+    decks, and (optionally) boss blinds drawn from the ante-eligible pool."""
+    from balatro_gym.engine import BOSSES, DECKS, JOKERS, Rarity
 
-    ante = int(np_random.integers(1, 4))
+    ante = int(np_random.integers(1, max_ante + 1))
     jokers: tuple[str, ...] = ()
-    pool = sorted(JOKERS)
+    pool = sorted(j for j, d in JOKERS.items() if d.rarity != Rarity.LEGENDARY)
     if pool and np_random.random() < 0.7:
         k = int(np_random.integers(1, 4))
         jokers = tuple(np_random.choice(pool, size=min(k, len(pool)), replace=False))
@@ -41,8 +44,17 @@ def default_scenario_sampler(np_random) -> ScenarioConfig:
     if np_random.random() < 0.5:
         ht = HandType(int(np_random.integers(1, 10)))
         levels[ht] = int(np_random.integers(2, 5))
-    kind = BlindKind(int(np_random.integers(0, 2)))  # small/big (bosses via full env)
-    return ScenarioConfig(ante=ante, blind_kind=kind, joker_ids=jokers, hand_levels=levels)
+    deck = str(np_random.choice(sorted(DECKS))) if np_random.random() < 0.3 else "d_red"
+    kind = BlindKind(int(np_random.integers(0, 3 if bosses else 2)))
+    boss_id = None
+    if kind == BlindKind.BOSS:
+        eligible = sorted(
+            b for b, d in BOSSES.items() if d.effect.min_ante <= ante and not d.effect.is_finisher
+        )
+        boss_id = str(np_random.choice(eligible)) if eligible else None
+    return ScenarioConfig(
+        ante=ante, blind_kind=kind, deck=deck, joker_ids=jokers, hand_levels=levels, boss_id=boss_id
+    )
 
 
 class BalatroBlindEnv(BalatroEnv):
@@ -76,11 +88,13 @@ class BalatroBlindEnv(BalatroEnv):
             ante=cfg.ante,
             blind_kind=cfg.blind_kind,
             deck_id=cfg.deck,
+            stake=cfg.stake,
             joker_ids=list(cfg.joker_ids),
             hand_levels=cfg.hand_levels,
             hands=cfg.hands,
             discards=cfg.discards,
             money=cfg.money,
+            boss_id=cfg.boss_id,
         )
         self._pending = None
         self._episode_steps = 0

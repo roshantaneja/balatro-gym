@@ -36,9 +36,12 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--out", default="ppo_balatro")
     parser.add_argument("--eval-episodes", type=int, default=50)
+    parser.add_argument("--deck", default="d_red", help="deck id (full/scripted envs)")
+    parser.add_argument("--stake", default="white", help="stake name (full/scripted envs)")
     args = parser.parse_args()
 
-    env = gym.make(args.env)
+    env_kwargs = {} if "Blind" in args.env else {"deck": args.deck, "stake": args.stake}
+    env = gym.make(args.env, **env_kwargs)
 
     try:
         import tensorboard  # noqa: F401
@@ -69,12 +72,13 @@ def main() -> None:
     print(f"eval over {args.eval_episodes} episodes: reward {mean_r:.2f} +/- {std_r:.2f}")
 
     # Compare against baselines on the same env.
-    from balatro_gym.env.baselines import HeuristicAgent, RandomLegalAgent
+    from balatro_gym.env.baselines import HeuristicAgent, RandomLegalAgent, StrategistAgent
     from balatro_gym.env.eval import evaluate
 
     raw = env.unwrapped
     print("random baseline:   ", evaluate(raw, RandomLegalAgent(), seeds=20).summary())
     print("heuristic baseline:", evaluate(raw, HeuristicAgent(), seeds=20).summary())
+    print("strategist baseline:", evaluate(raw, StrategistAgent(), seeds=20).summary())
 
 
 if __name__ == "__main__":

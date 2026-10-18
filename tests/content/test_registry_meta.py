@@ -6,9 +6,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from balatro_gym.engine.effects import JOKERS
-
 import tests.helpers  # noqa: F401  (loads content registries)
+from balatro_gym.engine.effects import JOKERS
 
 CONTENT_TEST_DIR = Path(__file__).parent
 

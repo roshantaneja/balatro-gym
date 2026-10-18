@@ -10,7 +10,6 @@ from __future__ import annotations
 import pytest
 
 from balatro_gym.engine import score_play
-
 from tests.helpers import cards, joker, make_run
 
 # (joker ids, played, held, expected score, derivation)

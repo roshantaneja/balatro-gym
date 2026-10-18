@@ -6,7 +6,7 @@ handle BLIND_SELECT / SHOP / PACK_OPEN. Rewards accumulate across auto-steps.
 
 from __future__ import annotations
 
-from typing import Callable
+from collections.abc import Callable
 
 import numpy as np
 
@@ -18,11 +18,11 @@ from .full import BalatroEnv
 Controller = Callable[["BalatroScriptedShopEnv", np.ndarray], int]
 
 
-def always_play_blind(env: "BalatroScriptedShopEnv", mask: np.ndarray) -> int:
+def always_play_blind(env: BalatroScriptedShopEnv, mask: np.ndarray) -> int:
     return codec.SELECT_BLIND
 
 
-def greedy_shop(env: "BalatroScriptedShopEnv", mask: np.ndarray) -> int:
+def greedy_shop(env: BalatroScriptedShopEnv, mask: np.ndarray) -> int:
     """Buy affordable jokers cheapest-first, then buffoon packs, then leave."""
     run = env.run
     shop = run.shop
@@ -41,21 +41,27 @@ def greedy_shop(env: "BalatroScriptedShopEnv", mask: np.ndarray) -> int:
     return codec.LEAVE_SHOP_IDX
 
 
-def greedy_pack(env: "BalatroScriptedShopEnv", mask: np.ndarray) -> int:
+def greedy_pack(env: BalatroScriptedShopEnv, mask: np.ndarray) -> int:
     for i in range(codec.N_PACK_OPTIONS):
         if mask[codec.PICK_PACK_BASE + i]:
             return codec.PICK_PACK_BASE + i
     return codec.SKIP_PACK_IDX
 
 
-def strategist_shop(env: "BalatroScriptedShopEnv", mask: np.ndarray) -> int:
+def strategist_shop(env: BalatroScriptedShopEnv, mask: np.ndarray) -> int:
     """Community-strategy shop (docs/strategy.md): tiered scaling-joker buys
     under an interest reserve, decay selling, targeted rerolls."""
     return _strategist()._shop_phase(env, mask)
 
 
-def strategist_pack(env: "BalatroScriptedShopEnv", mask: np.ndarray) -> int:
+def strategist_pack(env: BalatroScriptedShopEnv, mask: np.ndarray) -> int:
     return _strategist()._pack_phase(env, mask)
+
+
+def strategist_targets(env: BalatroScriptedShopEnv, mask: np.ndarray) -> int:
+    """Target selection for consumables committed by the controllers (pack
+    picks). Consumables the agent itself committed are left to the agent."""
+    return _strategist()._target_phase(env, mask)
 
 
 _STRATEGIST = None
@@ -70,10 +76,15 @@ def _strategist():
     return _STRATEGIST
 
 
+def strategist_blind(env: BalatroScriptedShopEnv, mask: np.ndarray) -> int:
+    return _strategist()._blind_phase(env, mask)
+
+
 DEFAULT_CONTROLLERS: dict[str, Controller] = {
-    "blind_select": always_play_blind,
+    "blind_select": strategist_blind,
     "shop": strategist_shop,
     "pack_open": strategist_pack,
+    "target": strategist_targets,
 }
 
 # The original naive controllers remain available:
@@ -81,6 +92,7 @@ GREEDY_CONTROLLERS: dict[str, Controller] = {
     "blind_select": always_play_blind,
     "shop": greedy_shop,
     "pack_open": greedy_pack,
+    "target": strategist_targets,
 }
 
 
@@ -98,6 +110,8 @@ class BalatroScriptedShopEnv(BalatroEnv):
         guard = 0
         while self.run.phase not in (Phase.WON, Phase.GAME_OVER):
             phase = self._env_phase()
+            if phase == "target" and self._pending is not None and self._pending[0] != "pack":
+                return total_reward, all_events, False  # agent's own consumable
             controller = self.controllers.get(phase)
             if controller is None:
                 return total_reward, all_events, False
