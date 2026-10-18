@@ -33,9 +33,13 @@ WIN_MODEL = (-2.0959, -0.1997, 0.1564, 0.1206, -1.7614, 0.7058, 2.475)
 
 
 class LookaheadPlannerAgent(PlannerAgent):
-    def __init__(self, *args, samples_ahead: int = 4, **kwargs):
+    def __init__(self, *args, samples_ahead: int = 4, terminal: str = "margin", **kwargs):
         super().__init__(*args, **kwargs)
         self.samples_ahead = samples_ahead
+        # Terminal value of a rollout that cleared the ante: "margin" (power
+        # margin plus money carried, 24/120 on seeds 0-119) or "model" (the
+        # fitted win probability below, 1/16 before it was stopped).
+        self.terminal = terminal
         self._inner_env = None
         self._inner = PlannerAgent(seed=1, samples=2, top_k=4, commit=self.commit)
         self._inner.rollouts = 4
@@ -112,17 +116,17 @@ class LookaheadPlannerAgent(PlannerAgent):
             steps += 1
         r2 = ienv.run
         if r2.phase == Phase.WON:
-            return 1.0
+            return 3.0
         if r2.phase == Phase.GAME_OVER:
-            return 0.02 * r2.blind_index  # blinds cleared this ante before dying
+            return 0.3 * r2.blind_index  # blinds cleared this ante before dying
         proj = self._inner.power(self._inner.projected(r2), salt="lookahead")
         req = ante_base_chips(r2.ante, r2.stake) * r2.mods.get("ante_scaling", 1) * 2.0
         margin = math.log(max(proj, 1.0) * max(cardops.effective_hands(r2), 1) / req)
-        pair = min(r2.hand_levels[HandType.PAIR], 15)
-        nx = min(sum(1 for j in r2.jokers if _classify(j.id) == "x"), 3)
-        a = r2.ante / 8.0
-        feats = (1.0, margin, pair, nx, a, a * a, margin * a)
-        logit = sum(w * f for w, f in zip(WIN_MODEL, feats))
-        p_win = 1.0 / (1.0 + math.exp(-logit))
-        # Money carried over is a tie-breaker only: the model has no money term.
-        return p_win + 0.0005 * min(max(r2.money, 0), 60) * max(0, 8 - r2.ante) / 6.0
+        if self.terminal == "model":
+            pair = min(r2.hand_levels[HandType.PAIR], 15)
+            nx = min(sum(1 for j in r2.jokers if _classify(j.id) == "x"), 3)
+            a = r2.ante / 8.0
+            feats = (1.0, margin, pair, nx, a, a * a, margin * a)
+            logit = sum(w * f for w, f in zip(WIN_MODEL, feats))
+            return 1.0 / (1.0 + math.exp(-logit))
+        return 1.0 + 0.3 * margin + 0.004 * max(r2.money, 0)

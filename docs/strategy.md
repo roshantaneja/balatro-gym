@@ -237,20 +237,20 @@ streams are re-seeded (the rollout cannot see what the real reroll or the
 real next shop will hold), the rest of the ante is played out by a cheap
 inner planner (2 sampled hands, greedy rounds, the same shop rules), and
 the candidate with the best mean outcome over a few such futures wins.
-A rollout scores 1 for a won run, nearly 0 for a lost one, and otherwise
-the estimated probability of winning from the state at the start of the
-next ante: a logistic model fitted on 1,357 blind-select states from the
-planner's own runs (power margin against the ante's boss, pair level,
-xMult jokers, ante). This is the first version of the agent that weighs
-money against power by what the money actually buys in the shops that
-follow, instead of a hand-set exchange rate. It costs about 8 minutes per
+A rollout scores 3 for a won run, 0.3 per blind cleared for a lost one,
+and otherwise 1 plus 0.3 x log(projected power margin against the next
+ante's boss) plus $0.004 per dollar carried. It costs about 8 minutes per
 run on one core.
 
-Measured results (seeds 0-119, where the plain planner scores 29/120):
-a first version whose terminal score was a hand-made mix of power margin
-and money carried scored 24/120 with more early deaths (it hoarded money
-in antes 1-3 and died with it); the win-probability terminal value above
-is the current version.
+Measured on seeds 0-119, where the plain planner scores 29/120: 24/120,
+mean ante 5.9, with more early deaths (it keeps money in antes 1-3 that
+the greedy planner spends on its first jokers). A terminal value taken
+from the fitted win-probability model instead (power margin, pair level,
+xMult jokers, ante; no money term) was stopped at 1 win in 16 seeds: with
+money worth nothing to it, it spends on marginal power at every shop.
+The one-ante rollout therefore does not beat the greedy valuation; the
+horizon that would (several antes, for the compounding of early jokers)
+costs a multiple of the 8 minutes per run.
 
 The next step that the diagnostics justify is not more hand tuning but
 learning: use the planner to generate expert-labelled shop decisions and
