@@ -367,6 +367,8 @@ class PlannerAgent(StrategistAgent):
                 and ht in self.COMMIT_CANDIDATES
                 and run.hand_levels[ht] + 1 >= run.hand_levels[spam]
             )
+            if any(j.id == "j_constellation" for j in run.jokers) and ht != spam:
+                return 4.0  # +x0.1 per planet used: every planet feeds Constellation
             if ht == spam or movable or (self.commit is None and counts.get(ht, 0) / total >= 0.3):
                 if run.mods.get("observatory") and ht == spam:
                     # Observatory: a held spam planet is x1.5 every hand. Keep
@@ -378,6 +380,19 @@ class PlannerAgent(StrategistAgent):
         if inst.id == "c_fool" and run.last_consumable in PLANET_HAND:
             return 6.0 if PLANET_HAND[run.last_consumable] == self._spam_hand(run) else 0.5
         return super()._consumable_value(env, inst)
+
+    def _consumable_action(self, env, mask: np.ndarray) -> int | None:
+        run = env.run
+        use = super()._consumable_action(env, mask)
+        if use is not None:
+            return use
+        if any(j.id == "j_campfire" for j in run.jokers):
+            # Campfire gains x0.25 per card sold: junk is worth more sold now.
+            for i, inst in enumerate(run.consumables[: codec.N_CONSUMABLE_SLOTS]):
+                idx = codec.SELL_CONSUMABLE_BASE + i
+                if mask[idx] and self._consumable_value(env, inst) <= 1.0:
+                    return idx
+        return None
 
     # ------------------------------------------------------------- shop phase
     def _shop_phase(self, env, mask: np.ndarray) -> int:
@@ -514,6 +529,20 @@ class PlannerAgent(StrategistAgent):
                 if money_ok(offer.cost, ratio):
                     consider(ratio, idx, offer.cost)
 
+        # --- standard packs feed Hologram (+x0.25 per card added to the deck) ---
+        if any(j.id == "j_hologram" for j in run.jokers):
+            from balatro_gym.engine import PACKS
+
+            x_now = sum(j.state.get("x", 1.0) for j in run.jokers if j.id == "j_hologram")
+            for i, offer in enumerate(shop.pack_slots[:codec.N_BUY_PACK_SLOTS]):
+                idx = codec.BUY_PACK_BASE + i
+                if not mask[idx] or "standard" not in offer.pack_id:
+                    continue
+                n_picks = PACKS[offer.pack_id].picks
+                ratio = (x_now + 0.25 * n_picks) / max(x_now, 1.0)
+                if money_ok(offer.cost, ratio):
+                    consider(ratio, idx, offer.cost)
+
         # --- buffoon packs: value by sampling the joker pool (best of N options) ---
         if cardops.has_joker_room(run):
             from balatro_gym.engine import PACKS, Rarity
@@ -633,6 +662,8 @@ class PlannerAgent(StrategistAgent):
             else:
                 card = pack.option_cards[i]
                 value = 3 if (card and str(card.enhancement) != "none") else 1
+                if any(j.id == "j_hologram" for j in run.jokers):
+                    value += 3  # any card added to the deck is +x0.25
             if value > best[0]:
                 best = (value, idx)
         threshold = 3.0 if len(run.jokers) < 2 and pack.option_kinds and pack.option_kinds[0] == "joker" else 3.5

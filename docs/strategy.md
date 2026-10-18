@@ -161,11 +161,18 @@ and for generating expert trajectories, but not for inner-loop RL.
 | **current default, all 240 seeds** | 240 | **20%** | 6.3 |
 | same, economy jokers valued at 2x and Investment/Economy tags premium | 120 | 22% | 6.4 |
 | same plus the full $25 reserve from ante 2 (with / without the above) | 120 | 21% / 13% | 6.4 / 6.2 |
+| + joker synergies (Constellation uses every planet, Campfire sells junk, Hologram buys standard packs) | 240 | 18% | 6.2 |
 | current default, $100 start (diagnostic) | 60 | 57% | 7.3 |
 
 Seed-to-seed variance is large: the same agent scores 26% on seeds 0-119
 and 15% on seeds 120-239, so differences under ~8 points at 120 seeds are
 noise. Every variant since the 40-rollout change sits in that band.
+
+Income per round from a $4 start (12 runs): blind rewards $4.0, unused
+hands $1.8, interest $1.6, jokers and tags $0.8 — about $8 against the $5
+per round that the interest cap alone would pay. From $100 the same agent
+spends $76 on jokers, $36 on celestial packs, $20 on vouchers and $178 on
+rerolls per run; from $4 it spends $51, $11, $4 and $56.
 
 Things that did not move the needle within noise (40 seeds each): an
 interest-first reserve ($25 from ante 4), economy-joker valuation (expected
