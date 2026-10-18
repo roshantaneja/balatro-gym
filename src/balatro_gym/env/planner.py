@@ -76,7 +76,8 @@ ECON_DOLLARS: dict[str, float] = {
     "j_trading": 0.8, "j_cartomancer": 1.0, "j_vagabond": 0.3, "j_8ball": 0.5,
     "j_hallucination": 0.5, "j_riff_raff": 1.5, "j_chaos": 1.5, "j_astronomer": 1.5,
 }
-DOLLAR_TO_POWER = 0.012  # +$1 of expected income ~ +1.2% power (a $5 joker ~ +6%)
+DOLLAR_TO_POWER = 0.012  # +$1 of expected income ~ +1.2% power (a $5 joker ~ +6%).
+# Doubling this (and the cap below) measured 22% vs 26% at 120 seeds: not better.
 
 
 def rounds_left(run) -> int:
@@ -89,16 +90,22 @@ class PlannerAgent(StrategistAgent):
 
     def __init__(self, seed: int = 0, samples: int = 5, top_k: int = 10,
                  commit: HandType | None = HandType.PAIR, adaptive: bool = False,
-                 reserve_cap: int = 25, hunt_floor: int = 8, min_gain_per_dollar: float = 0.0):
+                 reserve_cap: int = 25, hunt_floor: int = 25, min_gain_per_dollar: float = 0.0,
+                 early_reserve: bool = False):
         super().__init__(seed)
         self.samples = samples
         self.top_k = top_k
         self.reserve_cap = reserve_cap  # money kept for interest in antes 2-6
-        self.hunt_floor = hunt_floor  # money kept while rerolling for an xMult joker
+        # Money kept while rerolling for an xMult joker. At the interest cap
+        # (the default) the agent never rerolls below its reserve: 26% vs 20%
+        # win rate at 120 seeds against a $8 floor, because the interest it
+        # keeps buys more rerolls over the run than the early ones it skips.
+        self.hunt_floor = hunt_floor
         # Opportunity cost of a dollar: a purchase must raise measured power by
         # at least this fraction per dollar spent (a reroll is ~15% to show an
         # xMult joker, so money kept for rerolls has real value).
         self.min_gain_per_dollar = min_gain_per_dollar
+        self.early_reserve = early_reserve  # hold the full interest reserve from ante 2
         # The build's spam hand. Every planet, joker valuation and play
         # decision is aligned to it; the strongest hand is still played
         # whenever the spam hand would fall off pace. With `adaptive`, the
@@ -125,9 +132,9 @@ class PlannerAgent(StrategistAgent):
             return 0   # nothing after the last boss: spend it all
         if run.ante == 7:
             return min(self.reserve_cap, 12)
-        if run.ante == 2:
+        if run.ante == 2 and not self.early_reserve:
             return min(self.reserve_cap, 10)  # a scoring board first, interest second
-        if run.ante == 3:
+        if run.ante == 3 and not self.early_reserve:
             return min(self.reserve_cap, 15)
         return min(run.interest_cap, self.reserve_cap)
 
@@ -324,11 +331,24 @@ class PlannerAgent(StrategistAgent):
                 value = TAG_VALUE.get(nxt.id, 0) if nxt else 2
             if tag and tag.id == "t_orbital" and tag.state.get("hand") == int(self._spam_hand(run)):
                 value = 10  # +3 levels on the build's hand
+            if tag and tag.id == "t_meteor" and run.mods.get("telescope"):
+                value = 8  # a Mega Celestial pack with Telescope: two spam planets
             threshold = 6 if run.blind_index == 0 else 8
             if value >= threshold:
                 hands = cardops.effective_hands(run)
-                margin = 1.3 if value >= 10 else 2.0  # +3 spam levels is worth a blind reward
-                if self.power(run, salt="skip") * hands >= margin * self.requirement(run):
+                power = self.power(run, salt="skip")
+                if value >= 8:
+                    # Premium tags (a free rare joker, an edition, +3 levels):
+                    # skip whenever the blind faced after the skip is clearable.
+                    if run.blind_index == 0:
+                        ok = power * hands >= 1.3 * self.requirement(run, 1.5)
+                    else:
+                        b_hands, b_pen = self.boss_handicap(run.ante_boss)
+                        mult = BOSSES[run.ante_boss].effect.score_multiplier() if run.ante_boss in BOSSES else 2.0
+                        ok = power * b_pen * min(hands, b_hands) >= 1.3 * self.requirement(run, mult)
+                    if ok:
+                        return codec.SKIP_BLIND
+                elif power * hands >= 2.0 * self.requirement(run):
                     return codec.SKIP_BLIND
         if mask[codec.SELECT_BLIND]:
             return codec.SELECT_BLIND
@@ -572,8 +592,8 @@ class PlannerAgent(StrategistAgent):
         no_x = not any(_classify(j.id) == "x" for j in run.jokers)
         keep = 4  # always keep a cheap joker's price after a reroll
         # Without a multiplicative joker the board cannot keep up with the
-        # requirement curve past ante 4: from ante 3 on, hunting for one is
-        # worth most of the interest reserve (keep a joker's price in hand).
+        # requirement curve past ante 4; `hunt_floor` says how far below the
+        # interest reserve the hunt may dip (not at all by default).
         hunting = (no_x and run.ante >= 3) or behind
         if mask[codec.REROLL_IDX] and (
             cost == 0

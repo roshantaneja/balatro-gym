@@ -231,8 +231,8 @@ PLANET_HAND = {
 TAG_VALUE: dict[str, float] = {
     "t_negative": 10, "t_polychrome": 8, "t_rare": 8, "t_holo": 6, "t_foil": 5,
     "t_voucher": 6, "t_charm": 6, "t_buffoon": 6, "t_meteor": 4, "t_ethereal": 6,
-    "t_standard": 2, "t_top_up": 5, "t_double": 5, "t_investment": 6, "t_economy": 4,
-    "t_coupon": 5, "t_d6": 3, "t_uncommon": 4, "t_boss": 2, "t_handy": 3,
+    "t_standard": 2, "t_top_up": 5, "t_double": 5, "t_investment": 6, "t_economy": 5,
+    "t_coupon": 5, "t_d6": 3, "t_uncommon": 6, "t_boss": 2, "t_handy": 3,
     "t_garbage": 2, "t_juggle": 1, "t_speed": 2, "t_orbital": 4,
 }
 

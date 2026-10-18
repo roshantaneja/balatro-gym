@@ -109,13 +109,14 @@ obs, reward, terminated, truncated, info = env.step(action)
 | random | 0% | 1.0 | 0.01 |
 | greedy heuristic | 0% | 3.5 | 1.2 |
 | strategist | 5% | 4.5 | 1.3 |
-| planner (pair build) | 20% (24/120) | 6.2 | ~60 |
+| planner (pair build) | 26% (31/120) | 6.5 | ~60 |
 
 None of the baselines beats the game reliably yet. The planner almost never
 loses before ante 4 and reaches ante 8 in a third of runs; what kills it is
-antes 5-7 on boards that never found a multiplicative joker (56% of its
-losses have none) or deep spam-hand levels (losers average pair level 3.6,
-winners 8.6). See `docs/strategy.md` for the measured levers and every
+antes 5-7 on boards that never found a multiplicative joker (half of its
+losses have none) or deep spam-hand levels (losers average pair level 4.6,
+winners 10.5). Money is the binding constraint: started with $100 instead
+of $4 the same agent wins 57% of runs. See `docs/strategy.md` for the measured levers and every
 variant that was tried; `python scripts/eval_agents.py --agent planner
 --seeds 120 --workers 4` reproduces the table (per-seed boards, levels,
 money and the losing blind are printed for diagnosis) and

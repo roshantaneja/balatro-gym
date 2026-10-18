@@ -123,11 +123,12 @@ every board-shaping judgment with a measurement on cloned engine state:
   paired ranks, flush draws and Baron/Shoot-the-Moon faces stay in hand;
   Half Joker caps the play at 3 cards, Square Joker pads to exactly 4; the
   padding is skipped under The Tooth (pays per card) and The Serpent.
-- **xMult hunting**: a board without a multiplicative joker cannot follow
-  the requirement curve past ante 4, so from ante 3 the agent rerolls for
-  one down to ~$10 instead of sitting on the interest cap, and the reserve
-  itself ramps ($0 → $10 → $15 → $25) so the first scoring jokers are
-  bought before interest is farmed.
+- **Interest first, then rerolls**: the reserve ramps ($0 → $10 → $15 →
+  $25) so the first scoring jokers are bought before interest is farmed,
+  and from then on rerolls (the hunt for a multiplicative joker) come out
+  of the surplus above the reserve only. Hunting below the reserve was
+  measured at every floor from $4 to $10 and always lost: the interest a
+  held reserve earns buys more rerolls over a run than the early ones.
 - **Graded spending**: a purchase that raises measured power ≥12% may dip
   below the reserve; ≥30% may spend the bankroll when the ante's boss is
   out of reach; ≥60% always. Boss-reroll vouchers (Director's Cut, Retcon)
@@ -153,7 +154,12 @@ and for generating expert trajectories, but not for inner-loop RL.
 | same, hunting floor $4 instead of $8 | 120 | 13% | 6.1 |
 | same, purchases must gain >= 2% / 4% power per dollar | 120 | 15% / 10% | 6.1 / 5.9 |
 | + 40 endgame rollouts (was 10), four play options | 120 | 20% | 6.2 |
-| + at-risk trigger at 2x pace, 80 rollouts on boss blinds (current default) | 120 | 20% | 6.2 |
+| + at-risk trigger at 2x pace, 80 rollouts on boss blinds | 120 | 20% | 6.2 |
+| + premium skip tags gated on the next blind only | 120 | 18% | 6.2 |
+| + never reroll below the interest reserve (current default) | 120 | 26% | 6.5 |
+| same, economy jokers valued at 2x and Investment/Economy tags premium | 120 | 22% | 6.4 |
+| same plus the full $25 reserve from ante 2 | 120 | 21% | 6.4 |
+| current default, $100 start (diagnostic) | 60 | 57% | 7.3 |
 
 Things that did not move the needle within noise (40 seeds each): an
 interest-first reserve ($25 from ante 4), economy-joker valuation (expected
@@ -169,12 +175,16 @@ sampling the pool, draw-chasing discard options in the endgame rollouts
 (no more ante-1 losses), boss-aware requirement estimates with Director's
 Cut rerolls of killer bosses, and no commitment under The Eye / The Mouth.
 
-Where the current default dies: 56% of its losses never found a
+Where the current default dies: half of its losses never found a
 multiplicative joker (the shop offers one in ~15% of two-slot views, so a
 run sees about three, half of them conditional), and losers average pair
-level 3.6 against 8.6 for winners. Economy knobs are exhausted: the
-interest reserve cap, the hunting floor and per-dollar purchase thresholds
-all land within noise or below, and adaptive hand commitment picks Pair on
+level 4.6 against 10.5 for winners. Money is the bottleneck, not judgment:
+started with $100 instead of $4 the same agent wins 57% of runs, earning
+$285 per run and spending $178 of it on rerolls (31 per run) against $180
+earned and 12 rerolls from a $4 start. Spending policies that dip below
+the interest reserve to hunt for an xMult earlier all measured worse than
+holding the reserve and rerolling from the surplus; valuing economy jokers
+higher did not help either, and adaptive hand commitment picks Pair on
 nearly every seed.
 
 The in-round play policy is not exhausted. Replaying every lost blind of a
