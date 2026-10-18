@@ -248,9 +248,16 @@ the greedy planner spends on its first jokers). A terminal value taken
 from the fitted win-probability model instead (power margin, pair level,
 xMult jokers, ante; no money term) was stopped at 1 win in 16 seeds: with
 money worth nothing to it, it spends on marginal power at every shop.
-The one-ante rollout therefore does not beat the greedy valuation; the
-horizon that would (several antes, for the compounding of early jokers)
-costs a multiple of the 8 minutes per run.
+A third variant applied the lookahead only in the shop before each boss
+(antes 2-6) with a two-ante horizon and 4-6 sampled futures per candidate
+(`horizon=2, boss_shops_only=True`): 6 wins in 57 seeds before it was
+stopped. The rollouts share random numbers across candidates, but the
+inner planner that plays them (2 sampled hands, greedy rounds) is weaker
+and noisier than the real agent, so the comparison between candidates
+is dominated by rollout variance and the greedy valuation, which has no
+such variance, decides better. Search over shops would need rollouts
+that are both cheap and low-variance, which this engine's per-round cost
+does not allow at useful sample sizes.
 
 The next step that the diagnostics justify is not more hand tuning but
 learning: use the planner to generate expert-labelled shop decisions and

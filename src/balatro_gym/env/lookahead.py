@@ -33,9 +33,12 @@ WIN_MODEL = (-2.0959, -0.1997, 0.1564, 0.1206, -1.7614, 0.7058, 2.475)
 
 
 class LookaheadPlannerAgent(PlannerAgent):
-    def __init__(self, *args, samples_ahead: int = 4, terminal: str = "margin", **kwargs):
+    def __init__(self, *args, samples_ahead: int = 4, terminal: str = "margin",
+                 horizon: int = 1, boss_shops_only: bool = False, **kwargs):
         super().__init__(*args, **kwargs)
         self.samples_ahead = samples_ahead
+        self.horizon = horizon  # antes to roll out before scoring
+        self.boss_shops_only = boss_shops_only  # lookahead only in the shop before a boss
         # Terminal value of a rollout that cleared the ante: "margin" (power
         # margin plus money carried, 24/120 on seeds 0-119) or "model" (the
         # fitted win probability below, 1/16 before it was stopped).
@@ -54,6 +57,8 @@ class LookaheadPlannerAgent(PlannerAgent):
         run = env.run
         shop = run.shop
         if shop is None or run.ante >= 8:
+            return action
+        if self.boss_shops_only and (run.blind_index != 2 or run.ante < 2):
             return action
         kind, payload = codec.decode_kind(action)
         contested = kind in ("reroll", "leave_shop", "buy_pack") or (
@@ -110,7 +115,7 @@ class LookaheadPlannerAgent(PlannerAgent):
         obs, _r, term, _trunc, info = ienv.step(action)
         steps = 0
         self._inner._power_cache.clear()
-        while not term and ienv.run.ante == start_ante and steps < 400:
+        while not term and ienv.run.ante < start_ante + self.horizon and steps < 400 * self.horizon:
             a = self._inner.act(ienv, obs, info["action_mask"])
             obs, _r, term, _trunc, info = ienv.step(a)
             steps += 1
