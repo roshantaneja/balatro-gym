@@ -163,6 +163,7 @@ and for generating expert trajectories, but not for inner-loop RL.
 | same plus the full $25 reserve from ante 2 (with / without the above) | 120 | 21% / 13% | 6.4 / 6.2 |
 | + joker synergies (Constellation uses every planet, Campfire sells junk, Hologram buys standard packs) | 240 | 18% | 6.2 |
 | + cash skip tags (Handy, Garbage, Investment, Economy, Speed) valued at their payout | 240 | 20% | 6.2 |
+| + Chaos the Clown and reroll-discount vouchers valued as reroll income | 240 | 18% | 6.2 |
 | current default, $100 start (diagnostic) | 60 | 57% | 7.3 |
 
 Seed-to-seed variance is large: the same agent scores 26% on seeds 0-119
@@ -218,6 +219,14 @@ so such a model cannot supply the money-versus-power exchange rate the
 shop would need — the value of money is in what it buys, which the state
 does not show. Cash skip tags valued at their actual payout raise income
 from $152 to $168 per run without changing the win rate.
+
+Committing to another hand instead of Pair, same 60 seeds, same agent:
+Flush 14%, Two Pair 11%, Three of a Kind 17%, High Card 17% (Pair 27% on
+those seeds). The builds win different seeds — the union of all five is
+26 of 60 — but that is what five nearly independent 15% draws would give,
+so the winning build is decided by what the shops offer along the way,
+not by anything readable from the seed; an adaptive commitment that
+re-measures every shop picks Pair on nearly every seed.
 
 The next step that the diagnostics justify is not more hand tuning but
 learning: use the planner to generate expert-labelled shop decisions and

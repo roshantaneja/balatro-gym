@@ -74,7 +74,7 @@ ECON_DOLLARS: dict[str, float] = {
     "j_satellite": 1.0, "j_mail_in": 2.0, "j_faceless": 0.5, "j_rough_gem": 1.5,
     "j_ticket": 0.5, "j_matador": 1.0, "j_todo_list": 1.0, "j_credit_card": 1.0,
     "j_trading": 0.8, "j_cartomancer": 1.0, "j_vagabond": 0.3, "j_8ball": 0.5,
-    "j_hallucination": 0.5, "j_riff_raff": 1.5, "j_chaos": 1.5, "j_astronomer": 1.5,
+    "j_hallucination": 0.5, "j_riff_raff": 1.5, "j_chaos": 5.5, "j_astronomer": 1.5,
 }
 DOLLAR_TO_POWER = 0.012  # +$1 of expected income ~ +1.2% power (a $5 joker ~ +6%).
 # Doubling this (and the cap below) measured 22% vs 26% at 120 seeds: not better.
@@ -605,6 +605,8 @@ class PlannerAgent(StrategistAgent):
                     value = 9  # the committed build's planet engine
                 if vid in ("v_directors_cut", "v_retcon"):
                     value = 7  # rerolling killer bosses saves runs
+                if vid in ("v_reroll_surplus", "v_reroll_glut"):
+                    value = 7  # $2 off every reroll: a dozen rerolls a run pays it back twice
                 vouchers.append((value, idx, VOUCHERS[vid].cost))
         if vouchers:
             value, idx, cost = max(vouchers)
