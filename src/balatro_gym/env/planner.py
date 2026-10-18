@@ -17,6 +17,7 @@ import random
 import numpy as np
 
 from balatro_gym.engine import (
+    BOSSES,
     VOUCHERS,
     Edition,
     HandType,
@@ -31,6 +32,9 @@ from balatro_gym.engine.state import RoundState
 
 from . import action_codec as codec
 from .baselines import JOKER_INFO, PLANET_HAND, TAG_VALUE, VOUCHER_VALUE, StrategistAgent, _classify
+
+BOSSES_TO_REROLL = {"b_needle", "b_wall", "b_violet_vessel", "b_ox", "b_flint", "b_arm", "b_eye",
+                    "b_mouth", "b_crimson_heart", "b_psychic", "b_plant", "b_pillar", "b_verdant_leaf"}
 
 # Projected growth per round for scaling jokers (state key -> per-round delta),
 # used when valuing a purchase. Rough community-consensus rates for a
@@ -108,11 +112,13 @@ class PlannerAgent(StrategistAgent):
         it; rerolls and marginal buys come out of the surplus only."""
         if run.mods.get("no_interest"):
             return 0
-        if run.ante <= 2:
+        if run.ante <= 1:
             return 0
-        if run.ante <= 4:
-            return 10
-        return 15
+        if run.ante >= 8:
+            return 0   # nothing after the last boss: spend it all
+        if run.ante == 7:
+            return 12
+        return min(run.interest_cap, 25)
 
     # ------------------------------------------------------------- simulation
     def _sim_rng(self, run, salt: str) -> random.Random:
@@ -216,7 +222,8 @@ class PlannerAgent(StrategistAgent):
         cardops.add_joker(trial, j)
         value = self.power(self.projected(trial), salt="base")  # same hands as the base
         dollars = ECON_DOLLARS.get(jid, 0.0) * min(rounds_left(run), 18)
-        if dollars:
+        scoring = sum(1 for j in run.jokers if _classify(j.id) in ("add", "x", "retrig", "copy"))
+        if dollars and scoring >= 2:
             base = self.power(self.projected(run), salt="base")
             value += base * min(0.5, dollars * DOLLAR_TO_POWER)
         return value
@@ -231,6 +238,20 @@ class PlannerAgent(StrategistAgent):
 
     def requirement(self, run, kind_mult: float = 2.0) -> float:
         return ante_base_chips(run.ante, run.stake) * run.mods.get("ante_scaling", 1) * kind_mult
+
+    # (hands available, power multiplier) a boss effectively leaves us with
+    BOSS_HANDICAP = {
+        "b_needle": (1, 1.0), "b_eye": (99, 0.6), "b_mouth": (99, 0.7), "b_psychic": (99, 0.8),
+        "b_plant": (99, 0.75), "b_pillar": (99, 0.7), "b_head": (99, 0.8), "b_club": (99, 0.8),
+        "b_goad": (99, 0.8), "b_window": (99, 0.8), "b_flint": (99, 0.6), "b_arm": (99, 0.85),
+        "b_hook": (99, 0.8), "b_fish": (99, 0.85), "b_house": (99, 0.9), "b_mark": (99, 0.85),
+        "b_water": (99, 0.85), "b_serpent": (99, 0.9), "b_tooth": (99, 0.95), "b_ox": (99, 0.9),
+        "b_wheel": (99, 0.9), "b_manacle": (99, 0.9), "b_verdant_leaf": (99, 0.7),
+        "b_crimson_heart": (99, 0.7), "b_amber_acorn": (99, 0.9), "b_cerulean_bell": (99, 0.8),
+    }
+
+    def boss_handicap(self, boss_id) -> tuple[int, float]:
+        return self.BOSS_HANDICAP.get(boss_id, (99, 1.0))
 
     # ------------------------------------------------------------- ordering
     def _best_order_swap(self, env, mask: np.ndarray) -> int | None:
@@ -262,8 +283,11 @@ class PlannerAgent(StrategistAgent):
         use = self._consumable_action(env, mask)
         if use is not None:
             return use
-        if mask[codec.REROLL_BOSS_IDX] and run.ante_boss in ("b_needle", "b_wall", "b_violet_vessel", "b_ox", "b_flint", "b_arm", "b_eye", "b_crimson_heart"):
-            if run.money - 10 >= self._reserve(run) + 5:
+        if mask[codec.REROLL_BOSS_IDX] and run.ante_boss in BOSSES_TO_REROLL:
+            boss_hands, boss_pen = self.boss_handicap(run.ante_boss)
+            mult = BOSSES[run.ante_boss].effect.score_multiplier()
+            hands = min(cardops.effective_hands(run), boss_hands)
+            if self.power(run, salt="skip") * boss_pen * hands < 1.3 * self.requirement(run, mult):
                 return codec.REROLL_BOSS_IDX
         if mask[codec.SKIP_BLIND] and run.blind_index < 2 and run.ante >= 2:
             tag = run.blind_tags[run.blind_index] if run.blind_index < len(run.blind_tags) else None
@@ -326,16 +350,36 @@ class PlannerAgent(StrategistAgent):
         need = self.requirement(run)  # next boss requirement as the yardstick
         hands = cardops.effective_hands(run)
         deficit = need / max(now * hands, 1.0)  # >1 means we cannot beat the boss yet
+        # The blind we actually face next decides whether we are "dead anyway".
+        from balatro_gym.engine import BOSSES
+
+        if run.blind_index >= 2:
+            next_mult = BOSSES[run.ante_boss].effect.score_multiplier() if run.ante_boss in BOSSES else 2.0
+            boss_hands, boss_pen = self.boss_handicap(run.ante_boss)
+            hands_next = min(hands, boss_hands)
+            power_next = now * boss_pen
+        else:
+            next_mult = 1.0 if run.blind_index == 0 else 1.5
+            hands_next, power_next = hands, now
+        dead_now = self.requirement(run, next_mult) > 0.9 * power_next * hands_next
+        # The boss after that is what rerolls and purchases should prepare for.
+        boss_hands, boss_pen = self.boss_handicap(run.ante_boss)
+        deficit = need / max(now * boss_pen * min(hands, boss_hands), 1.0)
 
         def money_ok(cost: int, importance: float) -> bool:
             left = run.money + cardops.debt_allowance(run) - cost
-            if importance >= 1.6 or deficit > 1.0:
+            if importance >= 1.6 or dead_now:
                 return left >= -cardops.debt_allowance(run)  # build-defining, or dead anyway
-            if importance >= 1.25:
-                return left >= reserve - 12
+            if importance >= 1.3:
+                return left >= reserve - 10
             return left >= reserve
 
         best = (1.0, None, 0)  # (ratio, action, cost)
+        picks: list[tuple[float, float, int, int]] = []  # (gain per dollar, ratio, action, cost)
+
+        def consider(ratio: float, idx: int, cost: int) -> None:
+            if ratio >= 1.03 or cost == 0:
+                picks.append(((ratio - 1.0) / (cost + 2.0), ratio, idx, cost))
 
         # --- jokers on offer: add, or replace the weakest when the board is full ---
         for i, it in enumerate(shop.card_slots[:codec.N_BUY_CARD_SLOTS]):
@@ -355,8 +399,8 @@ class PlannerAgent(StrategistAgent):
                         ratio = 1 + (ratio - 1) * 0.8
                     if it.cost == 0:
                         ratio += 0.05
-                    if ratio > best[0] and money_ok(it.cost, ratio):
-                        best = (ratio, idx, it.cost)
+                    if money_ok(it.cost, ratio):
+                        consider(ratio, idx, it.cost)
                 else:
                     # replacement: sell the joker whose removal costs least, then buy
                     for j in run.jokers:
@@ -364,20 +408,18 @@ class PlannerAgent(StrategistAgent):
                             continue
                         ratio = self.value_of_joker(run, it.item_id, it.edition, replace_uid=j.uid) / max(base, 1.0)
                         # Replacing forfeits half the old joker's price: demand a real step up.
-                        if ratio >= 1.12 and ratio > best[0] + 0.02 and money_ok(it.cost - j.sell_value, ratio):
+                        if ratio >= 1.12 and money_ok(it.cost - j.sell_value, ratio):
                             sidx = codec.SELL_JOKER_BASE + run.jokers.index(j)
                             if sidx < codec.SELL_JOKER_BASE + codec.N_SELL_SLOTS and mask[sidx]:
-                                best = (ratio, sidx, it.cost)
+                                consider(ratio, sidx, max(1, it.cost - j.sell_value))
             elif it.kind == "planet" and mask[idx]:
                 ratio = self.value_of_planet(run, it.item_id) / max(base, 1.0)
-                if ratio > best[0] and money_ok(it.cost, ratio):
-                    best = (ratio, idx, it.cost)
+                if money_ok(it.cost, ratio):
+                    consider(ratio, idx, it.cost)
             elif it.kind in ("tarot", "spectral") and mask[idx]:
                 want = super()._consumable_value(env, cardops.new_consumable(run, it.item_id))
                 if want >= 3 and (it.cost == 0 or run.money - it.cost >= reserve + 5):
-                    ratio = 1.0 + 0.02 * want
-                    if ratio > best[0]:
-                        best = (ratio, idx, it.cost)
+                    consider(1.0 + 0.02 * want, idx, it.cost)
 
         # --- celestial packs: a guaranteed spam planet with Telescope, else a chance ---
         spam_planet = next((cid for cid, ht in PLANET_HAND.items() if ht == self._spam_hand(run)), None)
@@ -392,8 +434,31 @@ class PlannerAgent(StrategistAgent):
                 options = PACKS[offer.pack_id].options
                 p_hit = 1.0 if run.mods.get("telescope") else 1 - (11 / 12) ** options
                 ratio = 1 + p_hit * (planet_ratio - 1)
-                if ratio > best[0] and money_ok(offer.cost, ratio):
-                    best = (ratio, idx, offer.cost)
+                if money_ok(offer.cost, ratio):
+                    consider(ratio, idx, offer.cost)
+
+        # --- buffoon packs: value by sampling the joker pool (best of N options) ---
+        if cardops.has_joker_room(run):
+            from balatro_gym.engine import PACKS, Rarity
+
+            for i, offer in enumerate(shop.pack_slots[:codec.N_BUY_PACK_SLOTS]):
+                idx = codec.BUY_PACK_BASE + i
+                if not mask[idx] or "buffoon" not in offer.pack_id:
+                    continue
+                pool = cardops.joker_pool(run, Rarity.COMMON) + cardops.joker_pool(run, Rarity.UNCOMMON)
+                if not pool:
+                    continue
+                rng = self._sim_rng(run, "buffoon")
+                n_opts = PACKS[offer.pack_id].options
+                draws = [rng.choice(pool) for _ in range(min(4, n_opts + 1))]
+                ratios = sorted(self.value_of_joker(run, jid) / max(base, 1.0) for jid in draws)
+                ratio = 1 + 0.9 * (ratios[-1] - 1) if n_opts >= 2 else ratios[-1]
+                if money_ok(offer.cost, ratio):
+                    consider(ratio, idx, offer.cost)
+
+        if picks:
+            picks.sort(reverse=True)
+            best = (picks[0][1], picks[0][2], picks[0][3])
 
         # Only buy things that actually move the needle (>= +3% power), or
         # anything free.
@@ -411,6 +476,8 @@ class PlannerAgent(StrategistAgent):
                 value = VOUCHER_VALUE.get(vid, 2)
                 if self.commit is not None and vid in ("v_telescope", "v_observatory"):
                     value = 9  # the committed build's planet engine
+                if vid in ("v_directors_cut", "v_retcon"):
+                    value = 7  # rerolling killer bosses saves runs
                 vouchers.append((value, idx, VOUCHERS[vid].cost))
         if vouchers:
             value, idx, cost = max(vouchers)
@@ -426,7 +493,7 @@ class PlannerAgent(StrategistAgent):
             left = run.money - offer.cost
             if offer.cost == 0:
                 return idx
-            if "buffoon" in pid and left >= reserve - 4 and (len(run.jokers) < run.joker_slots or deficit > 0.5):
+            if "buffoon" in pid and (left >= reserve or dead_now) and (len(run.jokers) < run.joker_slots or deficit > 0.5):
                 return idx
             if "celestial" in pid and left >= reserve and run.stats.get("hands_played_run", 0) >= 4:
                 return idx
@@ -438,11 +505,12 @@ class PlannerAgent(StrategistAgent):
         # --- reroll while behind the curve and able to pay ---
         cost = 0 if shop.free_rerolls > 0 else shop.reroll_cost
         no_x = not any(_classify(j.id) == "x" for j in run.jokers)
+        keep = 4  # always keep a cheap joker's price after a reroll
         if mask[codec.REROLL_IDX] and (
             cost == 0
-            or (deficit > 1.0 and run.money - cost >= 0)  # dead anyway: spend everything
-            or (deficit > 0.6 and run.money - cost >= reserve - 10 and cost <= 9)
-            or ((deficit > 0.3 or no_x) and run.money - cost >= reserve and cost <= 9)
+            or (dead_now and run.money - cost >= keep)  # dead anyway: spend everything
+            or (deficit > 0.8 and run.money - cost >= max(keep, reserve - 5) and cost <= 9)
+            or ((deficit > 0.3 or no_x) and run.money - cost >= max(keep, reserve) and cost <= 9)
             or (run.money - cost >= reserve + 15 and cost <= 10)
         ):
             return codec.REROLL_IDX
@@ -622,6 +690,51 @@ def _simple_discard(run) -> tuple[int, ...] | None:
     return idxs if idxs and _legal_discard(run, idxs) else None
 
 
+def _draw_discards(run) -> list[tuple[int, ...]]:
+    """Discard shapes that chase a draw: keep the biggest suit group (flush
+    draw) or the longest rank run (straight draw), dump the rest (<= 5)."""
+    from collections import Counter
+
+    cards = run.round.hand
+    n = len(cards)
+    out: list[tuple[int, ...]] = []
+    suits = Counter(c.suit for c in cards if not c.is_stone)
+    if suits:
+        s_best, cnt = max(suits.items(), key=lambda kv: kv[1])
+        if 3 <= cnt <= 4:
+            dump = [i for i in range(n) if cards[i].is_stone or cards[i].suit != s_best]
+            dump.sort(key=lambda i: int(cards[i].rank))
+            idxs = tuple(sorted(dump[:5]))
+            if idxs and _legal_discard(run, idxs):
+                out.append(idxs)
+    values = sorted({int(c.rank) for c in cards if not c.is_stone})
+    best_run: list[int] = []
+    for i in range(len(values)):
+        run_ = [values[i]]
+        for v in values[i + 1:]:
+            if v - run_[-1] <= 1:
+                run_.append(v)
+            else:
+                break
+        if len(run_) > len(best_run):
+            best_run = run_
+    if 3 <= len(best_run) <= 4:
+        keep_vals = set(best_run)
+        seen: set = set()
+        dump = []
+        for i in sorted(range(n), key=lambda i: -int(cards[i].rank)):
+            v = int(cards[i].rank)
+            if v in keep_vals and v not in seen and not cards[i].is_stone:
+                seen.add(v)
+            else:
+                dump.append(i)
+        dump.sort(key=lambda i: int(cards[i].rank))
+        idxs = tuple(sorted(dump[:5]))
+        if idxs and _legal_discard(run, idxs):
+            out.append(idxs)
+    return out
+
+
 def rollout_clear(run, first_action, rng: random.Random, top_k: int = 8) -> float:
     """Play out the rest of the blind greedily on a clone after `first_action`
     (("play", idxs) or ("discard", idxs)). Returns 1.0 when the blind clears,
@@ -676,7 +789,10 @@ def _committed_choice(self, env, mask: np.ndarray) -> int | None:
             best_spam = (res.score, gidx)
     if best_spam[1] is None:
         return None
-    if best_spam[0] >= need or best_spam[0] >= pace or best_any[0] < pace * 0.5:
+    if best_spam[0] >= need:
+        return best_spam[1]
+    scaler = any(j.id in GROWTH or j.id == "j_supernova" for j in run.jokers)
+    if scaler and rnd.hands_left >= 3 and best_spam[0] >= 1.5 * pace:
         return best_spam[1]
     return None
 
@@ -687,7 +803,7 @@ def _planner_play_phase(self, env, mask: np.ndarray) -> int:
     run = env.run
     rnd = run.round
     base_choice = None
-    if self.commit is not None:
+    if self.commit is not None and rnd.boss_id not in ("b_eye", "b_mouth"):
         base_choice = _committed_choice(self, env, mask)
     if base_choice is None:
         base_choice = StrategistAgent._play_phase(self, env, mask)
@@ -706,6 +822,11 @@ def _planner_play_phase(self, env, mask: np.ndarray) -> int:
     simple = _simple_discard(run)
     if simple is not None and simple != engine_idxs:
         options.append(("discard", simple, None))
+    seen_d = {o[1] for o in options if o[0] == "discard"}
+    for d in _draw_discards(run):
+        if d not in seen_d:
+            options.append(("discard", d, None))
+            seen_d.add(d)
     rng = self._sim_rng(run, f"roll:{rnd.hands_left}:{rnd.discards_left}:{len(rnd.hand)}")
     scores = []
     seeds = [rng.random() for _ in range(self.rollouts)]  # common random numbers
@@ -725,4 +846,4 @@ def _planner_play_phase(self, env, mask: np.ndarray) -> int:
 
 
 PlannerAgent._play_phase = _planner_play_phase
-PlannerAgent.rollouts = 8
+PlannerAgent.rollouts = 10

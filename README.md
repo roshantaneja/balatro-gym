@@ -109,14 +109,15 @@ obs, reward, terminated, truncated, info = env.step(action)
 | random | 0% | 1.0 | 0.01 |
 | greedy heuristic | 0% | 3.5 | 1.2 |
 | strategist | 5% | 4.5 | 1.3 |
-| planner (pair build) | 4% | 4.7 | ~10 |
+| planner (pair build) | 10% | 5.4 | ~12 |
 
-None of the baselines beats the game reliably yet. The planner's diagnostics
-point at where the gap is: started with $100 instead of $4 it wins 22% of runs
-(mean ante 6.4), and its winning boards share deep spam-hand levels (9-18
-planets on the pair) plus one xMult joker. Money and planet access, not play
-quality, are the binding constraints for a scripted agent; see
-`docs/strategy.md` for the measured levers and the variants that were tried.
+None of the baselines beats the game reliably yet. The planner never loses
+ante 1 any more and reaches ante 8 in a quarter of runs; what kills it is
+boss blinds at antes 4-7 (The Wall, The Psychic, The Eye) on boards whose
+measured power is 20-40% short. Its diagnostics point at where the gap is:
+started with $100 instead of $4 it wins 22% of runs (mean ante 6.4), and its
+winning boards share deep spam-hand levels plus one xMult joker. See
+`docs/strategy.md` for the measured levers and every variant that was tried.
 `examples/train_maskable_ppo.py` prints every baseline next to a trained policy.
 
 ## Architecture

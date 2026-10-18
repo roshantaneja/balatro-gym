@@ -128,8 +128,9 @@ and for generating expert trajectories, but not for inner-loop RL.
 | strategist | 100 | 5% | 4.5 |
 | planner, greedy play, no commitment | 40 | 0% | 4.6 |
 | planner, adaptive commitment | 40 | 0-2.5% | 4.6-4.9 |
-| planner, pair commitment | 100 | 4% | 4.7 |
+| planner, pair commitment (first version) | 100 | 4% | 4.7 |
 | planner, pair commitment, $100 start (diagnostic) | 40 | 22% | 6.4 |
+| planner, current default | 100 | 10% | 5.4 |
 
 Things that did not move the needle within noise (40 seeds each): an
 interest-first reserve ($25 from ante 4), economy-joker valuation (expected
@@ -137,7 +138,13 @@ dollars as a power bonus), celestial-pack valuation by expected spam-planet
 gain, relaxed skip-for-tag rules, stricter joker replacement thresholds.
 Things that did: structural candidate generation (10x faster, same decisions),
 paired sampling for valuations (removed noise-driven purchases), rollout
-partial credit (stopped single-card plays at ante 1), pair commitment.
+partial credit (stopped single-card plays at ante 1), pair commitment,
+measuring "dead anyway" against the blind actually coming next (the earlier
+boss-based test drained the bankroll every shop), a reserve that falls away
+in antes 7-8, value-per-dollar shop ranking with buffoon packs valued by
+sampling the pool, draw-chasing discard options in the endgame rollouts
+(no more ante-1 losses), boss-aware requirement estimates with Director's
+Cut rerolls of killer bosses, and no commitment under The Eye / The Mouth.
 
 The next step that the diagnostics justify is not more hand tuning but
 learning: use the planner to generate expert-labelled shop decisions and
