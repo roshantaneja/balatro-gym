@@ -6,7 +6,7 @@
 Each seed is one full run from ante 1. Per-seed lines list the outcome, the
 money held at the start of every ante, the final board, hand levels, vouchers
 and (for losses) the chips scored against the requirement of the lost blind.
-The planner takes ~30-60 s per run on one core; the others take a second.
+The planner takes ~60 s per run on one core, the lookahead planner ~8 min; the others take a second.
 """
 
 from __future__ import annotations
@@ -32,6 +32,10 @@ def make_agent(name: str, samples: int, top_k: int):
         return PlannerAgent(samples=samples, top_k=top_k)
     if name == "planner-adaptive":
         return PlannerAgent(samples=samples, top_k=top_k, adaptive=True)
+    if name == "lookahead":
+        from balatro_gym.env.lookahead import LookaheadPlannerAgent
+
+        return LookaheadPlannerAgent(samples=samples, top_k=top_k, samples_ahead=3)
     raise SystemExit(f"unknown agent {name!r}")
 
 
@@ -73,7 +77,7 @@ def run_seed(args: tuple) -> dict:
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--agent", default="planner",
-                   choices=["random", "heuristic", "strategist", "planner", "planner-adaptive"])
+                   choices=["random", "heuristic", "strategist", "planner", "planner-adaptive", "lookahead"])
     p.add_argument("--seeds", type=int, default=60, help="number of seeds (0..N-1)")
     p.add_argument("--start", type=int, default=0, help="first seed")
     p.add_argument("--deck", default="d_red")

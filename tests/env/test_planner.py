@@ -96,3 +96,25 @@ def test_fillers_never_lower_the_score():
     held = [c for i, c in enumerate(trial.round.hand) if i not in padded]
     assert score_play(trial, played, held=held).score >= base
     assert _best_play(run)[1] is not None
+
+
+def test_lookahead_rollout_scores_and_leaves_state_untouched():
+    from balatro_gym.engine import Phase
+    from balatro_gym.env import action_codec as codec
+    from balatro_gym.env.lookahead import LookaheadPlannerAgent
+
+    env = BalatroEnv()
+    agent = LookaheadPlannerAgent(samples=2, top_k=4, samples_ahead=1)
+    obs, info = env.reset(seed=53)
+    steps = 0
+    while env.run.phase != Phase.SHOP and steps < 200:
+        a = agent.act(env, obs, info["action_mask"])
+        obs, _r, _term, _trunc, info = env.step(a)
+        steps += 1
+    assert env.run.phase == Phase.SHOP
+    before = env.run.to_dict()
+    score = agent._rollout(env, codec.LEAVE_SHOP_IDX, 0)
+    assert -1.0 <= score <= 3.0
+    assert env.run.to_dict() == before  # rollouts never touch the real run
+    a = agent.act(env, obs, info["action_mask"])
+    assert info["action_mask"][a]
