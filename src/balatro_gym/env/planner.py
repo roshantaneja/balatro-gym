@@ -89,11 +89,16 @@ class PlannerAgent(StrategistAgent):
 
     def __init__(self, seed: int = 0, samples: int = 5, top_k: int = 10,
                  commit: HandType | None = HandType.PAIR, adaptive: bool = False,
-                 reserve_cap: int = 25):
+                 reserve_cap: int = 25, hunt_floor: int = 8, min_gain_per_dollar: float = 0.0):
         super().__init__(seed)
         self.samples = samples
         self.top_k = top_k
         self.reserve_cap = reserve_cap  # money kept for interest in antes 2-6
+        self.hunt_floor = hunt_floor  # money kept while rerolling for an xMult joker
+        # Opportunity cost of a dollar: a purchase must raise measured power by
+        # at least this fraction per dollar spent (a reroll is ~15% to show an
+        # xMult joker, so money kept for rerolls has real value).
+        self.min_gain_per_dollar = min_gain_per_dollar
         # The build's spam hand. Every planet, joker valuation and play
         # decision is aligned to it; the strongest hand is still played
         # whenever the spam hand would fall off pace. With `adaptive`, the
@@ -322,7 +327,8 @@ class PlannerAgent(StrategistAgent):
             threshold = 6 if run.blind_index == 0 else 8
             if value >= threshold:
                 hands = cardops.effective_hands(run)
-                if self.power(run, salt="skip") * hands >= 2.0 * self.requirement(run):
+                margin = 1.3 if value >= 10 else 2.0  # +3 spam levels is worth a blind reward
+                if self.power(run, salt="skip") * hands >= margin * self.requirement(run):
                     return codec.SKIP_BLIND
         if mask[codec.SELECT_BLIND]:
             return codec.SELECT_BLIND
@@ -414,7 +420,7 @@ class PlannerAgent(StrategistAgent):
         picks: list[tuple[float, float, int, int]] = []  # (gain per dollar, ratio, action, cost)
 
         def consider(ratio: float, idx: int, cost: int) -> None:
-            if ratio >= 1.03 or cost == 0:
+            if cost == 0 or ratio >= 1.03 + self.min_gain_per_dollar * cost:
                 picks.append(((ratio - 1.0) / (cost + 2.0), ratio, idx, cost))
 
         # --- jokers on offer: add, or replace the weakest when the board is full ---
@@ -453,6 +459,17 @@ class PlannerAgent(StrategistAgent):
                 if money_ok(it.cost, ratio):
                     consider(ratio, idx, it.cost)
             elif it.kind in ("tarot", "spectral") and mask[idx]:
+                gain_dollars = 0.0
+                if it.item_id == "c_hermit":
+                    gain_dollars = min(20, max(0, run.money - it.cost))
+                elif it.item_id == "c_temperance":
+                    gain_dollars = min(50, sum(j.sell_value for j in run.jokers))
+                if gain_dollars >= 8:
+                    # Money tarots are valued like income: dollars -> power.
+                    ratio = 1.0 + gain_dollars * DOLLAR_TO_POWER
+                    if money_ok(it.cost, ratio):
+                        consider(ratio, idx, it.cost)
+                    continue
                 want = super()._consumable_value(env, cardops.new_consumable(run, it.item_id))
                 if want >= 3 and (it.cost == 0 or run.money - it.cost >= reserve + 5):
                     consider(1.0 + 0.02 * want, idx, it.cost)
@@ -490,9 +507,11 @@ class PlannerAgent(StrategistAgent):
                     continue
                 rng = self._sim_rng(run, "buffoon")
                 n_opts = PACKS[offer.pack_id].options
-                draws = [rng.choice(pool) for _ in range(min(4, n_opts + 1))]
-                ratios = sorted(self.value_of_joker(run, jid) / max(base, 1.0) for jid in draws)
-                ratio = 1 + 0.9 * (ratios[-1] - 1) if n_opts >= 2 else ratios[-1]
+                bests = []
+                for _ in range(3):  # expected best-of-N over a few sampled packs
+                    draws = [rng.choice(pool) for _ in range(n_opts)]
+                    bests.append(max(self.value_of_joker(run, jid) / max(base, 1.0) for jid in draws))
+                ratio = sum(bests) / len(bests)
                 if money_ok(offer.cost, ratio):
                     consider(ratio, idx, offer.cost)
 
@@ -559,7 +578,7 @@ class PlannerAgent(StrategistAgent):
         if mask[codec.REROLL_IDX] and (
             cost == 0
             or (dead_now and run.money - cost >= keep)  # dead anyway: spend everything
-            or (hunting and run.money - cost >= max(8, reserve - 15) and cost <= 9)
+            or (hunting and run.money - cost >= max(self.hunt_floor, reserve - 15) and cost <= 9)
             or (deficit > 0.8 and run.money - cost >= max(keep, reserve - 5) and cost <= 9)
             or ((deficit > 0.3 or no_x) and run.money - cost >= max(keep, reserve) and cost <= 9)
             or (run.money - cost >= reserve + 15 and cost <= 10)
@@ -925,7 +944,7 @@ def _planner_play_phase(self, env, mask: np.ndarray) -> int:
     run = env.run
     rnd = run.round
     base_choice = None
-    if self.commit is not None and rnd.boss_id not in ("b_eye", "b_mouth"):
+    if self.commit is not None and rnd.boss_id != "b_eye":  # The Mouth wants one hand type: the spam hand
         base_choice = _committed_choice(self, env, mask)
     if base_choice is None:
         base_choice = StrategistAgent._play_phase(self, env, mask)
@@ -943,12 +962,12 @@ def _planner_play_phase(self, env, mask: np.ndarray) -> int:
     best_score, _best_play = plays[0]
     if best_score >= need:
         return _pad_action(env, mask, base_choice)
-    at_risk = best_score * rnd.hands_left < 1.5 * need
+    at_risk = best_score * rnd.hands_left < self.risk_margin * need
     if not at_risk or (rnd.discards_left == 0 and len(plays) < 2):
         return _pad_action(env, mask, base_choice)
     # Arbitrate the top plays (and the discard shapes when discards remain)
     # by rollouts of the rest of the blind.
-    options: list[tuple[str, tuple[int, ...], int]] = [("play", idxs, None) for _, idxs in plays[:3]]
+    options: list[tuple[str, tuple[int, ...], int]] = [("play", idxs, None) for _, idxs in plays[:4]]
     if kind == "play" and engine_idxs not in {o[1] for o in options}:
         options.append(("play", engine_idxs, base_choice))
     if rnd.discards_left == 0:
@@ -980,7 +999,8 @@ def _planner_play_phase(self, env, mask: np.ndarray) -> int:
                 seen_d.add(d)
     rng = self._sim_rng(run, f"roll:{rnd.hands_left}:{rnd.discards_left}:{len(rnd.hand)}")
     scores = []
-    seeds = [rng.random() for _ in range(self.rollouts)]  # common random numbers
+    n_roll = self.rollouts * (2 if rnd.boss_id is not None else 1)  # the run is on the line
+    seeds = [rng.random() for _ in range(n_roll)]  # common random numbers
     for okind, idxs, _ in options:
         scores.append(sum(rollout_clear(run, (okind, idxs), random.Random(sd)) for sd in seeds))
     pick = max(range(len(options)), key=lambda i: (scores[i], i == 0))
@@ -1019,4 +1039,5 @@ def _pad_action(env, mask: np.ndarray, action: int) -> int:
 
 
 PlannerAgent._play_phase = _planner_play_phase
-PlannerAgent.rollouts = 10
+PlannerAgent.rollouts = 40  # 10 was measurably worse: 13% of lost blinds cleared with 40
+PlannerAgent.risk_margin = 2.0  # arbitrate by rollouts when best play x hands left < margin x need

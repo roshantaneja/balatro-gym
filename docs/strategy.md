@@ -147,8 +147,13 @@ and for generating expert trajectories, but not for inner-loop RL.
 | planner, pair commitment, $100 start (diagnostic) | 40 | 22% | 6.4 |
 | planner, pair commitment, graded spending | 100 | 10% | 5.4 |
 | + free card cycling, corrected scaler growth table | 60 | 17% | 6.2 |
-| + xMult hunting rerolls, reserve ladder (current default) | 120 | 16% | 6.1 |
-| current default with a $15 interest reserve instead of $25 | 120 | 16% | 6.1 |
+| + xMult hunting rerolls, reserve ladder | 120 | 16% | 6.1 |
+| same with a $15 interest reserve instead of $25 | 120 | 16% | 6.1 |
+| same with buffoon packs valued over 3 sampled packs, Orbital skips | 120 | 16% | 6.3 |
+| same, hunting floor $4 instead of $8 | 120 | 13% | 6.1 |
+| same, purchases must gain >= 2% / 4% power per dollar | 120 | 15% / 10% | 6.1 / 5.9 |
+| + 40 endgame rollouts (was 10), four play options | 120 | 20% | 6.2 |
+| + at-risk trigger at 2x pace, 80 rollouts on boss blinds (current default) | 120 | 20% | 6.2 |
 
 Things that did not move the needle within noise (40 seeds each): an
 interest-first reserve ($25 from ante 4), economy-joker valuation (expected
@@ -167,9 +172,18 @@ Cut rerolls of killer bosses, and no commitment under The Eye / The Mouth.
 Where the current default dies: 56% of its losses never found a
 multiplicative joker (the shop offers one in ~15% of two-slot views, so a
 run sees about three, half of them conditional), and losers average pair
-level 3.6 against 8.6 for winners. Variants that made no difference at 120
-seeds: the interest reserve cap ($15 vs $25) and adaptive hand commitment
-(it picks Pair on nearly every seed).
+level 3.6 against 8.6 for winners. Economy knobs are exhausted: the
+interest reserve cap, the hunting floor and per-dollar purchase thresholds
+all land within noise or below, and adaptive hand commitment picks Pair on
+nearly every seed.
+
+The in-round play policy is not exhausted. Replaying every lost blind of a
+120-seed run from its first hand (`scripts/replay_losses.py`: snapshot the
+engine state, restore it into the env) showed that the
+same agent with 40 rollouts instead of 10 clears 13 of 102 lost blinds on
+every attempt, and a perfect-information greedy oracle clears 20 — so the
+rollout budget was raised (10% → 20% win rate came from this and the shop
+changes above). Widening the at-risk trigger further did not add to it.
 
 The next step that the diagnostics justify is not more hand tuning but
 learning: use the planner to generate expert-labelled shop decisions and

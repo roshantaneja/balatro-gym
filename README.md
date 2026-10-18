@@ -109,7 +109,7 @@ obs, reward, terminated, truncated, info = env.step(action)
 | random | 0% | 1.0 | 0.01 |
 | greedy heuristic | 0% | 3.5 | 1.2 |
 | strategist | 5% | 4.5 | 1.3 |
-| planner (pair build) | 16% (19/120) | 6.1 | ~40 |
+| planner (pair build) | 20% (24/120) | 6.2 | ~60 |
 
 None of the baselines beats the game reliably yet. The planner almost never
 loses before ante 4 and reaches ante 8 in a third of runs; what kills it is
@@ -118,7 +118,9 @@ losses have none) or deep spam-hand levels (losers average pair level 3.6,
 winners 8.6). See `docs/strategy.md` for the measured levers and every
 variant that was tried; `python scripts/eval_agents.py --agent planner
 --seeds 120 --workers 4` reproduces the table (per-seed boards, levels,
-money and the losing blind are printed for diagnosis).
+money and the losing blind are printed for diagnosis) and
+`scripts/replay_losses.py` replays every lost blind against a
+perfect-information oracle to separate play mistakes from board problems.
 `examples/train_maskable_ppo.py` prints every baseline next to a trained policy.
 
 ## Architecture
