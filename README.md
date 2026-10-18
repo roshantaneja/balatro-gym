@@ -110,6 +110,7 @@ obs, reward, terminated, truncated, info = env.step(action)
 | greedy heuristic | 0% | 3.5 | 1.2 |
 | strategist | 5% | 4.5 | 1.3 |
 | planner (pair build) | 20% (47/240) | 6.2 | ~60 |
+| lookahead planner (seeds 0-119) | 20% (24/120) | 5.9 | ~480 |
 
 None of the baselines beats the game reliably yet. The planner almost never
 loses before ante 4 and reaches ante 8 in a third of runs; what kills it is
