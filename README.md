@@ -104,8 +104,8 @@ obs, reward, terminated, truncated, info = env.step(action)
 | agent | win rate | mean ante | sec / episode |
 |---|---|---|---|
 | random | 0% | 1.0 | 0.01 |
-| greedy heuristic | 0% | ~3.6 | ~1.1 |
-| strategist | ~7% | ~4.5 | ~1.2 |
+| greedy heuristic | 0% | 3.5 | 1.2 |
+| strategist | 5% | 4.5 | 1.3 |
 
 `docs/strategy.md` explains the doctrine the strategist codifies and the levers
 to tune; `examples/train_maskable_ppo.py` prints all three baselines next to a
