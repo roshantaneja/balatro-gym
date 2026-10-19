@@ -83,7 +83,7 @@ def main() -> None:
     p.add_argument("--start", type=int, default=0)
     p.add_argument("--decks", default="all", help="comma-separated deck ids or 'all'")
     p.add_argument("--stakes", default="all", help="comma-separated stake names or 'all'")
-    p.add_argument("--samples", type=int, default=40, help="planner rollouts")
+    p.add_argument("--samples", type=int, default=5, help="planner: hands sampled per valuation (its default)")
     p.add_argument("--workers", type=int, default=1)
     p.add_argument("--json", default=None, help="write every run's record here")
     args = p.parse_args()
