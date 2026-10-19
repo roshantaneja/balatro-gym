@@ -22,8 +22,19 @@ from balatro_gym.env.planner import PlannerAgent
 PHASES = {"blind_select": 0, "playing": 1, "shop": 2, "pack_open": 3, "target": 4}
 
 
-def collect(seed: int, deck: str, stake: str) -> dict:
+def collect(seed: int, deck: str, stake: str, driver: str | None = None, beta: float = 0.5) -> dict:
+    """One full run. The planner labels every visited state; the state
+    distribution is the planner's own, or (DAgger) a mixture: with `driver`
+    set to a typed-model checkpoint, each step follows the planner with
+    probability `beta` and the model otherwise, while the planner's action
+    is still what gets recorded."""
     agent = PlannerAgent(commit=HandType.PAIR)
+    model = None
+    if driver:
+        from balatro_gym.typed.agent import TypedModelAgent
+
+        model = TypedModelAgent(driver, seed=seed)
+    rng = np.random.default_rng(seed)
     env = BalatroEnv(deck=deck, stake=stake)
     obs, info = env.reset(seed=seed)
     records: dict[str, list] = {k: [] for k in obs}
@@ -32,6 +43,11 @@ def collect(seed: int, deck: str, stake: str) -> dict:
     while not done and steps < 4000:
         mask = info["action_mask"]
         a = agent.act(env, obs, mask)
+        taken = a
+        if model is not None and rng.random() >= beta:
+            taken = model.act(env, obs, mask)
+            if not mask[taken]:
+                taken = a
         for k, v in obs.items():
             records[k].append(np.asarray(v))
         masks.append(mask.copy())
@@ -39,7 +55,7 @@ def collect(seed: int, deck: str, stake: str) -> dict:
         phases.append(PHASES.get(env._env_phase(), 5))
         antes.append(env.run.ante)
         blinds.append(env.run.blind_index)
-        obs, _r, term, _trunc, info = env.step(a)
+        obs, _r, term, _trunc, info = env.step(taken)
         done, steps = term, steps + 1
     won = env.run.phase == Phase.WON
     n = len(actions)
@@ -64,11 +80,13 @@ def main() -> None:
     p.add_argument("--deck", default="d_red")
     p.add_argument("--stake", default="white")
     p.add_argument("--out", required=True)
+    p.add_argument("--driver", default=None, help="typed-model checkpoint that drives the run (DAgger)")
+    p.add_argument("--beta", type=float, default=0.5, help="probability of following the planner per step")
     args = p.parse_args()
     parts: list[dict] = []
     for seed in range(args.start, args.start + args.seeds):
         t = time.time()
-        rec = collect(seed, args.deck, args.stake)
+        rec = collect(seed, args.deck, args.stake, args.driver, args.beta)
         parts.append(rec)
         print(f"seed {seed}: {len(rec['action'])} decisions, won={bool(rec['won'][0])}, "
               f"ante {int(rec['final_ante'][0])}, {time.time() - t:.0f}s", flush=True)
