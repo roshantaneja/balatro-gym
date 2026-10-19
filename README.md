@@ -125,6 +125,35 @@ money and the losing blind are printed for diagnosis) and
 perfect-information oracle to separate play mistakes from board problems.
 `examples/train_maskable_ppo.py` prints every baseline next to a trained policy.
 
+## Validation across every deck and stake
+
+`scripts/validate_agent.py` plays every registered deck and stake for a set
+of seeds and reports completion (the run ends in WON or GAME_OVER within the
+step cap with only legal actions), wins and mean ante by deck and by stake,
+with a traceback for any run that does not finish:
+
+```bash
+python scripts/validate_agent.py --agent strategist --seeds 3 --workers 4      # 15 decks x 8 stakes x 3 seeds, ~1 min
+python scripts/validate_agent.py --agent planner --stakes white --seeds 2      # every deck, ~15 min on 4 cores
+python scripts/validate_agent.py --agent planner --decks d_red --seeds 2       # every stake
+```
+
+| agent | grid | complete | wins |
+|---|---|---|---|
+| strategist | 15 decks x 8 stakes x 3 seeds | 360 / 360 | 10 (white 5, red 4, green+ 1) |
+| planner | 15 decks, white stake, 2 seeds | 30 / 30 | 10 (Blue, Yellow, Green 2/2; Nebula, Zodiac, Anaglyph, Erratic 1/2) |
+| planner | Red Deck, 8 stakes, 2 seeds | 16 / 16 | 0 (mean ante 3.0 to 4.0 at every stake) |
+| planner | Black and Red Deck, white, 8 more seeds | 16 / 16 | Black 2/8, Red 4/8 |
+
+The sweep found one stall: with Brainstorm on the board the strategist (and
+the planner, which shares its ordering code) moved its best joker to slot 0
+and then re-sorted slot 0 by tier, swapping the same two jokers until the
+step cap in 3 of 360 runs. Fixed and covered by a test; every run above
+completes. Higher stakes are not won by any agent here: the planner's shop
+valuations were tuned at white stake, and from green stake up (faster
+blind scaling, then eternal jokers, fewer discards and the rest) it loses
+around ante 3 to 4.
+
 ## Architecture
 
 ```
