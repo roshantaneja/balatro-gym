@@ -179,19 +179,27 @@ answers["next_action"].label, answers["next_action"].confidence   # 'buy joker j
 answers["will_win"].value, answers["will_win"].confidence         # False, 0.88
 ```
 
-First results (200 planner runs, 28,823 decisions, held-out runs for validation;
-play on 60 unseen seeds):
+The in-round answer is multiple choice (`typed/candidates.py`): the model is
+offered the strongest plays (with and without junk padding, which the planner
+uses as a free discard) and the sensible discard shapes, each described by
+what a player can see (score against what the blind still needs, hand type
+and level, cards scoring, hands and discards left), and scores them. Naming
+one of 1,585 play subsets directly was the first version's weak point.
 
-| held-out exact match with the planner | blind select 90% · shop 54% · pack 77% · in-round play 15% (structured 12-slot decode 10%) |
+Results (200 planner runs plus one DAgger round of 100 runs, where the
+model drives half the steps and the planner labels every state; held-out
+runs for validation; play on 60 unseen seeds):
+
+| held-out exact match with the planner | blind select 89% · shop 57% · pack 80% · in-round option 75% (flat 3,519-way answer: 19%) |
 |---|---|
-| action confidence calibration (ECE) | 0.03 |
-| win forecast | Brier 0.22 at a 0.34 base rate: calibrated but uninformative from raw features |
-| model plays every phase | 0% wins, mean ante 1.0 |
-| model answers shop/blind/pack, strategist plays rounds | 0% wins, mean ante 3.8 (strategist alone: 5%, 4.5) |
-| model answers shop/blind/pack, planner plays rounds | 2% wins, mean ante 4.1 (planner alone: 20%, 6.2) |
+| action confidence calibration (ECE) | 0.03 (flat answer) · 0.12 (option answer, underconfident) |
+| win forecast | Brier 0.19 at a 0.30 base rate: calibrated, weakly informative |
+| model plays every phase | 1.7% wins (1/60), mean ante 3.5 (first version: 0%, 1.0) |
+| model answers shop/blind/pack, planner plays rounds | 1.7% wins, mean ante 4.3 (planner alone: 20%, 6.2) |
 
-Behaviour cloning from 200 runs reproduces the planner's shop and pack
-choices about half the time and its in-round plays rarely; errors compound
-over a run. Next: more runs, DAgger-style relabelling of the states the
-model itself reaches, and a structured in-round answer that scores the
-candidate plays rather than naming slots.
+The option answer fixed the in-round play (mean ante 1.0 to 3.5 playing
+alone); the shop answers are now the bottleneck: with the planner playing
+the rounds, the model's shop, blind and pack choices still lose half the
+planner's wins. Those choices depend on money, joker synergies and the
+coming boss in ways 200 runs of cloning do not capture; the planner itself
+settles them with rollouts.
