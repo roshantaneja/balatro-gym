@@ -117,6 +117,13 @@ class BalatroScriptedShopEnv(BalatroEnv):
                 return total_reward, all_events, False
             mask = self.action_masks()
             action = controller(self, mask)
+            if guard > 200:
+                # A controller that keeps swapping, selling and re-buying would
+                # never hand the turn back: force the phase's exit action.
+                for exit_action in (codec.LEAVE_SHOP_IDX, codec.SKIP_PACK_IDX, codec.SELECT_BLIND):
+                    if mask[exit_action]:
+                        action = exit_action
+                        break
             if not mask[action]:  # controller bug fallback: first legal action
                 legal = np.flatnonzero(mask)
                 if len(legal) == 0:
