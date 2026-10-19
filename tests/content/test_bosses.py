@@ -25,12 +25,19 @@ from balatro_gym.engine import (
 from balatro_gym.engine.effects import BOSSES, boss_def
 from balatro_gym.engine.round import blind_requirement, pick_boss, refill_hand
 from balatro_gym.engine.state import RoundState
-
 from tests.helpers import card, cards, make_run
 
 ANTE1_BOSSES = {
-    "b_hook", "b_club", "b_goad", "b_window", "b_head", "b_psychic", "b_manacle",
+    "b_hook", "b_club", "b_goad", "b_window", "b_head", "b_psychic", "b_manacle", "b_pillar",
 }
+FINISHERS = {"b_amber_acorn", "b_verdant_leaf", "b_violet_vessel", "b_crimson_heart", "b_cerulean_bell"}
+
+
+def pick_and_record(run):
+    """pick_boss is pure; begin_ante records the pick into bosses_seen."""
+    b = pick_boss(run)
+    run.bosses_seen.append(b)
+    return b
 
 
 def boss_game(seed: str, boss_id: str, *, ante: int = 1, prep=None, **kw) -> Game:
@@ -191,7 +198,7 @@ def test_psychic_rejects_4_card_play():
 
 def test_manacle_hand_refills_to_7():
     g = boss_game("man", "b_manacle")
-    assert g.run.round.boss_state["hand_size_bonus"] == -1
+    assert g.run.round.hand_size_bonus == -1
     assert len(g.run.round.hand) == 7
     g.apply(Discard((0, 1)))
     assert len(g.run.round.hand) == 7
@@ -337,19 +344,21 @@ def test_ox_tie_favors_lowest_hand_type():
 def test_ante8_picks_only_finisher():
     g = Game(seed="fin")
     g.run.ante = 8
-    assert pick_boss(g.run) == "b_violet_vessel"
+    assert pick_boss(g.run) in FINISHERS
 
 
 def test_ante1_pool_is_min_ante_1_non_finishers():
     g = Game(seed="pool")
     g.run.ante = 1
-    picks = {pick_boss(g.run) for _ in range(len(ANTE1_BOSSES))}
+    g.run.bosses_seen = []  # Game() already recorded this ante's boss
+    picks = {pick_and_record(g.run) for _ in range(len(ANTE1_BOSSES))}
     assert picks == ANTE1_BOSSES  # no repeats until the pool is exhausted
 
 
 def test_no_repeat_until_pool_exhausted():
     g = Game(seed="rep")
     g.run.ante = 1
-    seen = [pick_boss(g.run) for _ in range(len(ANTE1_BOSSES) + 1)]
+    g.run.bosses_seen = []
+    seen = [pick_and_record(g.run) for _ in range(len(ANTE1_BOSSES) + 1)]
     assert len(set(seen[:-1])) == len(ANTE1_BOSSES)
     assert seen[-1] in ANTE1_BOSSES  # pool recycles afterwards

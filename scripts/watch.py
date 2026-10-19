@@ -27,6 +27,7 @@ from balatro_gym.engine import (
     BlindCleared,
     BlindSkipped,
     Discarded,
+    Edition,
     HandScored,
     ItemBought,
     JokerSold,
@@ -57,6 +58,14 @@ class ModelAgent:
 
 
 def make_agent(name: str, model_path: str | None):
+    if name == "planner":
+        from balatro_gym.env.planner import PlannerAgent
+
+        return PlannerAgent()
+    if name == "strategist":
+        from balatro_gym.env.baselines import StrategistAgent
+
+        return StrategistAgent()
     if name == "model":
         if not model_path:
             raise SystemExit("--agent model requires --model <path.zip>")
@@ -69,11 +78,12 @@ def make_agent(name: str, model_path: str | None):
 class Session:
     """Holds one env + agent; steps on demand from HTTP requests."""
 
-    def __init__(self, agent_name: str, model_path: str | None, seed: int):
+    def __init__(self, agent_name: str, model_path: str | None, seed: int,
+                 deck: str = "d_red", stake: str = "white"):
         self.lock = threading.Lock()
         self.agent_name = agent_name
         self.agent = make_agent(agent_name, model_path)
-        self.env = BalatroEnv(render_mode="ansi")
+        self.env = BalatroEnv(render_mode="ansi", deck=deck, stake=stake)
         self.seed = seed
         self.step_count = 0
         self.total_reward = 0.0
@@ -202,36 +212,44 @@ class Session:
             env = self.env
             run = env.run
             rnd = run.round
-            boss = boss_def(rnd.boss_id).effect if (rnd and rnd.boss_id) else None
+            from balatro_gym.engine import cardops
+
+            boss = (
+                boss_def(rnd.boss_id).effect
+                if (rnd and rnd.boss_id and not rnd.boss_state.get("disabled")) else None
+            )
             face_down = set(rnd.face_down_uids) if rnd else set()
 
             hand = []
-            if rnd is not None:
+            visible = cardops.current_hand(run)
+            if visible:
                 for slot, i in enumerate(env._hand_order):
-                    hand.append(self._card(rnd.hand[i], boss, run, face_down, slot))
+                    hand.append(self._card(visible[i], boss, run, face_down, slot))
 
             shop = None
-            if run.shop is not None:
+            if run.shop is not None or run.open_pack is not None:
                 s = run.shop
                 shop = {
                     "cards": [
-                        {"kind": it.kind, "id": it.item_id, "cost": it.cost,
-                         "edition": str(it.edition) if str(it.edition) != "none" else None}
-                        for it in s.card_slots
+                        {"kind": it.kind, "id": it.item_id or repr(it.card), "cost": it.cost,
+                         "edition": str(it.edition) if str(it.edition) != "none" else None,
+                         "stickers": list(it.stickers)}
+                        for it in (s.card_slots if s else [])
                     ],
-                    "packs": [{"id": p.pack_id, "cost": p.cost} for p in s.pack_slots],
-                    "voucher": s.voucher,
-                    "reroll_cost": s.reroll_cost,
+                    "packs": [{"id": p.pack_id, "cost": p.cost} for p in (s.pack_slots if s else [])],
+                    "vouchers": list(s.vouchers) if s else [],
+                    "reroll_cost": (0 if s.free_rerolls else s.reroll_cost) if s else 0,
                     "open_pack": None,
                 }
-                if s.open_pack is not None:
-                    p = s.open_pack
+                if run.open_pack is not None:
+                    p = run.open_pack
                     shop["open_pack"] = {
                         "id": p.pack_id,
                         "picks_left": p.picks_left,
                         "options": [
                             {"kind": p.option_kinds[i],
                              "id": p.option_ids[i],
+                             "edition": p.option_editions[i] if i < len(p.option_editions) else "none",
                              "card": self._card(p.option_cards[i], None, run, set())
                              if p.option_cards[i] else None}
                             for i in range(len(p.option_kinds))
@@ -255,6 +273,24 @@ class Session:
                 "ante": run.ante,
                 "blind_index": run.blind_index,
                 "boss": boss_def(rnd.boss_id).name if (rnd and rnd.boss_id) else None,
+                "boss_disabled": bool(rnd and rnd.boss_state.get("disabled")),
+                "ante_boss": boss_def(run.ante_boss).name if run.ante_boss else None,
+                "blind_tags": [t.id if t else None for t in run.blind_tags],
+                "stake": str(run.stake),
+                "deck": run.deck_id,
+                "codec": {
+                    "hand_slots": codec.HAND_SLOTS,
+                    "SELECT_BLIND": codec.SELECT_BLIND, "SKIP_BLIND": codec.SKIP_BLIND,
+                    "REROLL_BOSS": codec.REROLL_BOSS_IDX, "PLAY": codec.PLAY_BASE,
+                    "DISCARD": codec.DISCARD_BASE, "TARGET": codec.TARGET_BASE,
+                    "USE_CONSUMABLE": codec.USE_CONSUMABLE_BASE,
+                    "SELL_CONSUMABLE": codec.SELL_CONSUMABLE_BASE,
+                    "SELL_JOKER": codec.SELL_JOKER_BASE, "SWAP_JOKERS": codec.SWAP_JOKER_BASE,
+                    "BUY_CARD": codec.BUY_CARD_BASE, "BUY_PACK": codec.BUY_PACK_BASE,
+                    "VOUCHER": codec.BUY_VOUCHER_BASE, "REROLL": codec.REROLL_IDX,
+                    "LEAVE": codec.LEAVE_SHOP_IDX, "PICK_PACK": codec.PICK_PACK_BASE,
+                    "SKIP_PACK": codec.SKIP_PACK_IDX,
+                },
                 "money": run.money,
                 "chips_scored": rnd.chips_scored if rnd else 0,
                 "chips_needed": rnd.chips_needed if rnd else 0,
@@ -264,16 +300,23 @@ class Session:
                 "deck_total": len(run.full_deck),
                 "hand": hand,
                 "jokers": [
-                    {"id": j.id, "sell": j.sell_value,
+                    {"id": "???" if (rnd and rnd.boss_state.get("jokers_hidden")) else j.id,
+                     "sell": j.sell_value,
                      "edition": str(j.edition) if str(j.edition) != "none" else None,
+                     "stickers": sorted(j.stickers),
+                     "debuffed": j.debuffed or bool(rnd and rnd.boss_state.get("disabled_joker_uid") == j.uid),
                      "state": {k: v for k, v in j.state.items()
                                if isinstance(v, (int, float)) and not isinstance(v, bool)}}
                     for j in run.jokers
                 ],
                 "joker_slots": run.joker_slots,
-                "consumables": [{"id": c.id, "kind": str(c.kind)} for c in run.consumables],
+                "consumables": [
+                    {"id": c.id, "kind": str(c.kind), "negative": c.edition == Edition.NEGATIVE,
+                     "sell": c.sell_value}
+                    for c in run.consumables
+                ],
                 "consumable_slots": run.consumable_slots,
-                "tags": list(run.tags),
+                "tags": [t.id for t in run.tags],
                 "vouchers": sorted(run.vouchers),
                 "shop": shop,
                 "last_action": self.last_action,
@@ -331,7 +374,10 @@ def main():
     import os
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--agent", choices=["heuristic", "random", "model"], default="heuristic")
+    parser.add_argument("--agent", choices=["heuristic", "strategist", "planner", "random", "model"],
+                        default="planner")
+    parser.add_argument("--deck", default="d_red", help="deck id, e.g. d_red, d_plasma")
+    parser.add_argument("--stake", default="white", help="white|red|green|black|blue|purple|orange|gold")
     parser.add_argument("--model", default=None, help="path to MaskablePPO .zip")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument(
@@ -340,7 +386,7 @@ def main():
     )
     args = parser.parse_args()
 
-    Handler.session = Session(args.agent, args.model, args.seed)
+    Handler.session = Session(args.agent, args.model, args.seed, args.deck, args.stake)
     server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
     print(f"watching {args.agent} agent at http://localhost:{args.port}")
     server.serve_forever()

@@ -29,7 +29,7 @@ class RunRNG:
         for name, s in state.items():
             self._streams[name].setstate(s)
 
-    def clone(self) -> "RunRNG":
+    def clone(self) -> RunRNG:
         new = object.__new__(RunRNG)
         new._streams = {}
         for name, r in self._streams.items():
@@ -47,7 +47,7 @@ class RunRNG:
         return out
 
     @classmethod
-    def from_dict(cls, d: dict) -> "RunRNG":
+    def from_dict(cls, d: dict) -> RunRNG:
         new = object.__new__(cls)
         new._streams = {}
         for name in STREAMS:

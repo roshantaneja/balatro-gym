@@ -1,25 +1,23 @@
 """Misc v1 jokers: Ancient, decaying/self-destructing food, Fortune Teller,
 Baseball Card, 8 Ball.
 
-Self-destruct pattern: round.py's round-end hook loop iterates `run.jokers`
-directly, so effects never mutate that list in place. Instead they REBIND
-`run.jokers` to a filtered copy — the in-progress iterator keeps walking the
-old list (no joker gets skipped), and the run sees the new list afterwards.
-Mid-scoring removal is never safe (scoring.py stages 3/5 index into
-run.jokers by slot), so hand-driven decay (Ice Cream) only flags-by-value
-mid-round and physically melts at round end.
+Self-destruct pattern: at round end, effects call cardops.destroy_joker
+(the round-end loop walks a snapshot list, and destroy_joker rebinds
+run.jokers). Mid-scoring removal is never safe (scoring.py stages 3/5 index
+into run.jokers by slot), so hand-driven decay (Ice Cream) queues the uid in
+run.pending_destroy and the engine removes it right after the hand resolves.
 """
 
 from __future__ import annotations
 
-from balatro_gym.engine.effects import CONSUMABLES, JOKERS, JokerDef, JokerEffect, register_joker
-from balatro_gym.engine.state import ConsumableInst
+from balatro_gym.engine import cardops
+from balatro_gym.engine.effects import JOKERS, JokerDef, JokerEffect, register_joker
 from balatro_gym.engine.types import ConsumableKind, Rank, Rarity, Suit
 
 
 def _self_destruct(run, j):
-    """Remove j from run.jokers by REBINDING (see module docstring)."""
-    run.jokers = [x for x in run.jokers if x.uid != j.uid]
+    """Remove j from the board at round end (see module docstring)."""
+    cardops.destroy_joker(run, j)
 
 
 class _AncientJoker(JokerEffect):
@@ -49,7 +47,7 @@ class _IceCream(JokerEffect):
     post-hand value during scoring and the read compensates with +5. Between
     hands, state["chips"] equals the displayed in-game value. Physically
     removed at round end once it reaches 0 (mid-scoring removal is unsafe);
-    until then it contributes nothing."""
+    melts right after the hand that empties it."""
 
     def on_independent(self, ctx, j):
         val = j.state["chips"] + 5
@@ -58,14 +56,13 @@ class _IceCream(JokerEffect):
 
     def update_on_hand_played(self, run, j, played, hr):
         j.state["chips"] -= 5
-
-    def update_on_round_end(self, run, j):
         if j.state["chips"] <= 0:
-            _self_destruct(run, j)
+            run.pending_destroy.append(j.uid)
 
 
 register_joker(
-    JokerDef("j_ice_cream", "Ice Cream", Rarity.COMMON, 5, _IceCream(), init_state={"chips": 100})
+    JokerDef("j_ice_cream", "Ice Cream", Rarity.COMMON, 5, _IceCream(),
+             init_state={"chips": 100}, eternal_compat=False)
 )
 
 
@@ -83,7 +80,8 @@ class _Popcorn(JokerEffect):
 
 
 register_joker(
-    JokerDef("j_popcorn", "Popcorn", Rarity.COMMON, 5, _Popcorn(), init_state={"mult": 20})
+    JokerDef("j_popcorn", "Popcorn", Rarity.COMMON, 5, _Popcorn(),
+             init_state={"mult": 20}, eternal_compat=False)
 )
 
 
@@ -94,12 +92,15 @@ class _GrosMichel(JokerEffect):
         ctx.add_mult(15, "joker", "j_gros_michel")
 
     def update_on_round_end(self, run, j):
-        eff = min(1.0, run.chance_multiplier / 6)
-        if run.rng.stream("chance").random() < eff:
+        if cardops.chance(run, 1, 6):
+            run.stats["gros_michel_extinct"] = True
             _self_destruct(run, j)
 
 
-register_joker(JokerDef("j_gros_michel", "Gros Michel", Rarity.COMMON, 5, _GrosMichel()))
+register_joker(
+    JokerDef("j_gros_michel", "Gros Michel", Rarity.COMMON, 5, _GrosMichel(),
+             eternal_compat=False, pool_excludes="gros_michel_extinct")
+)
 
 
 class _FortuneTeller(JokerEffect):
@@ -140,19 +141,11 @@ class _EightBall(JokerEffect):
         if card.is_stone or card.rank != Rank.EIGHT:
             return
         run = ctx.run
-        if len(run.consumables) >= run.consumable_slots:
+        if not cardops.has_consumable_room(run):
             return
         if not ctx.chance(1, 4):
             return
-        tarot_ids = sorted(
-            cid for cid, d in CONSUMABLES.items() if d.kind == ConsumableKind.TAROT
-        )
-        if not tarot_ids:
-            return
-        cid = run.rng.stream("consumable").choice(tarot_ids)
-        run.consumables.append(
-            ConsumableInst(id=cid, kind=ConsumableKind.TAROT, uid=run.new_uid())
-        )
+        cardops.create_random_consumable(run, ConsumableKind.TAROT)
 
 
 register_joker(JokerDef("j_8ball", "8 Ball", Rarity.COMMON, 5, _EightBall()))

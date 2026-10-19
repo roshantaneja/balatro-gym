@@ -34,7 +34,7 @@ class _GreenJoker(JokerEffect):
 register_joker(
     JokerDef(
         "j_green_joker", "Green Joker", Rarity.COMMON, 4, _GreenJoker(),
-        init_state={"mult": 0},
+        init_state={"mult": 0}, perishable_compat=False,
     )
 )
 
@@ -57,7 +57,7 @@ class _RideTheBus(JokerEffect):
 register_joker(
     JokerDef(
         "j_ride_the_bus", "Ride the Bus", Rarity.COMMON, 6, _RideTheBus(),
-        init_state={"mult": 0},
+        init_state={"mult": 0}, perishable_compat=False,
     )
 )
 
@@ -74,10 +74,9 @@ class _DNA(JokerEffect):
         rnd = run.round
         if rnd is None or rnd.hands_played != 0 or len(played) != 1:
             return
-        copy = played[0].clone()
-        copy.uid = run.new_uid()
-        run.full_deck.append(copy)
-        rnd.hand.append(copy)
+        from balatro_gym.engine import cardops
+
+        cardops.add_card(run, cardops.copy_card(run, played[0]), to_hand=True)
 
 
 register_joker(JokerDef("j_dna", "DNA", Rarity.RARE, 8, _DNA()))

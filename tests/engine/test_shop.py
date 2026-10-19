@@ -1,5 +1,6 @@
 """Shop: generation, buying, rerolls, packs, vouchers, tags, RNG stream isolation."""
 
+import tests.helpers  # noqa: F401  (loads content)
 from balatro_gym.engine import (
     BlindKind,
     BuyPack,
@@ -17,8 +18,6 @@ from balatro_gym.engine import (
     SkipBlind,
     new_blind_scenario,
 )
-
-import tests.helpers  # noqa: F401  (loads content)
 
 LEVELED = {HandType.PAIR: 30, HandType.HIGH_CARD: 30}
 
@@ -96,7 +95,7 @@ def test_buy_pack_and_pick():
     pack_offer = g.run.shop.pack_slots[0]
     g.apply(BuyPack(0))
     assert g.run.phase == Phase.PACK_OPEN
-    pack = g.run.shop.open_pack
+    pack = g.run.open_pack
     assert pack is not None
     assert pack.pack_id == pack_offer.pack_id
     n_options = len(pack.option_kinds)
@@ -109,13 +108,20 @@ def test_buy_pack_and_pick():
     jokers_before = len(g.run.jokers)
     deck_before = len(g.run.full_deck)
     cons_before = len(g.run.consumables)
-    g.apply(pick_acts[0])
+    kind = pack.option_kinds[pick_acts[0].index]
+    events = g.apply(pick_acts[0])
     gained = (
         len(g.run.jokers) - jokers_before
         + len(g.run.full_deck) - deck_before
         + len(g.run.consumables) - cons_before
     )
-    assert gained == 1
+    if kind in ("joker", "card"):
+        assert gained == 1
+    else:
+        # Pack consumables are used immediately, as in the game.
+        from balatro_gym.engine import ConsumableUsed
+
+        assert any(isinstance(e, ConsumableUsed) for e in events)
 
 
 def test_buy_voucher_applies():

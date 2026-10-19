@@ -119,4 +119,22 @@ class BlindKind(IntEnum):
 
 
 class Stake(StrEnum):
-    WHITE = "white"
+    """The 8 difficulty stakes, in unlock order. Each stake includes every
+    modifier of the stakes below it (see engine.levels.STAKE_ORDER)."""
+
+    WHITE = "white"    # base game
+    RED = "red"        # Small Blind gives no reward money
+    GREEN = "green"    # required score scales faster per ante
+    BLACK = "black"    # shop can have Eternal jokers (can't be sold or destroyed)
+    BLUE = "blue"      # -1 discard per round
+    PURPLE = "purple"  # required score scales faster still
+    ORANGE = "orange"  # shop can have Perishable jokers (debuffed after 5 rounds)
+    GOLD = "gold"      # shop can have Rental jokers ($3 per round)
+
+
+# Joker stickers (JokerInst.stickers entries).
+STICKER_ETERNAL = "eternal"        # cannot be sold or destroyed
+STICKER_PERISHABLE = "perishable"  # debuffed after 5 rounds
+STICKER_RENTAL = "rental"          # costs $1, charges $3 at the end of every round
+PERISHABLE_ROUNDS = 5
+RENTAL_FEE = 3

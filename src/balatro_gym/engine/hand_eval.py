@@ -107,7 +107,7 @@ def _straight_ranks(cards: list[Card], rules: EvalRules) -> set[int] | None:
 def evaluate_hand(played: list[Card], rules: EvalRules = DEFAULT_RULES) -> HandResult:
     """Classify a played selection of 1-5 cards."""
     detect = [c for c in played if not c.is_stone]
-    stones = [c for c in played if c.is_stone]
+    [c for c in played if c.is_stone]
 
     contained: set[HandType] = set()
     if detect:

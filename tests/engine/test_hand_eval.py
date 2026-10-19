@@ -1,7 +1,6 @@
 """Hand evaluator: all 13 types, contains-sets, precedence, rule modifiers."""
 
 from balatro_gym.engine import EvalRules, HandType, evaluate_hand
-
 from tests.helpers import cards
 
 

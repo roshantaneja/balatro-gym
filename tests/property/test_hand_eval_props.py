@@ -17,7 +17,6 @@ from balatro_gym.engine import (
     evaluate_hand,
     score_play,
 )
-
 from tests.helpers import joker, make_run
 
 _uids = itertools.count(50_000)

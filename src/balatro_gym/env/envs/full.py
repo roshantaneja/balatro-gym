@@ -13,16 +13,22 @@ from balatro_gym.engine import (
     Game,
     IllegalActionError,
     Phase,
+    PickPackItem,
     PlayHand,
     RunLost,
     RunWon,
+    Stake,
     UseConsumable,
+    cardops,
     consumable_def,
 )
 
 from .. import action_codec as codec
 from ..obs.encoder import ObsEncoder, canonical_order
 from ..rewards import RewardConfig
+
+# (kind, index, lo, hi): kind is "consumable" (slot) or "pack" (option index)
+Pending = tuple[str, int, int, int]
 
 
 class BalatroEnv(gym.Env):
@@ -31,6 +37,7 @@ class BalatroEnv(gym.Env):
     def __init__(
         self,
         deck: str = "d_red",
+        stake: str = "white",
         reward_config: RewardConfig | None = None,
         reward_mode: str | None = None,
         enable_skip_blind: bool = True,
@@ -39,6 +46,7 @@ class BalatroEnv(gym.Env):
     ):
         load_all()
         self.deck_id = deck
+        self.stake = Stake(stake)
         self.reward_config = reward_config or RewardConfig(mode=reward_mode or "blind")
         self.enable_skip_blind = enable_skip_blind
         self.strict_masking = strict_masking  # raise on illegal action (debug builds)
@@ -50,7 +58,7 @@ class BalatroEnv(gym.Env):
 
         self.game: Game | None = None
         self._hand_order: list[int] = []
-        self._pending: tuple[int, int, int] | None = None  # (slot, lo, hi) TARGET phase
+        self._pending: Pending | None = None
         self._episode_steps = 0
         self._mask_cache: np.ndarray | None = None  # invalidated on every state change
 
@@ -68,12 +76,18 @@ class BalatroEnv(gym.Env):
             return "terminal"
         return str(phase.value)
 
+    def _visible_hand(self) -> list:
+        return cardops.current_hand(self.run)
+
     def _refresh_hand_order(self) -> None:
-        rnd = self.run.round
-        self._hand_order = canonical_order(rnd.hand) if rnd is not None else []
+        hand = self._visible_hand()
+        self._hand_order = canonical_order(hand) if hand else []
 
     def _make_game(self, seed_str: str) -> Game:
-        return Game(seed=seed_str, deck_id=self.deck_id, enable_skip_blind=self.enable_skip_blind)
+        return Game(
+            seed=seed_str, deck_id=self.deck_id, stake=self.stake,
+            enable_skip_blind=self.enable_skip_blind,
+        )
 
     # -------------------------------------------------------------- masking
     def action_masks(self) -> np.ndarray:
@@ -86,10 +100,10 @@ class BalatroEnv(gym.Env):
     def _compute_mask(self) -> np.ndarray:
         if self.game is None or self.run.phase in (Phase.WON, Phase.GAME_OVER):
             return np.zeros(codec.N_ACTIONS, dtype=bool)
-        rnd = self.run.round
-        hand_n = len(rnd.hand) if rnd is not None else 0
+        hand_n = min(len(self._hand_order), codec.HAND_SLOTS)
         if self._pending is not None:
-            return codec.build_mask([], pending_targets=self._pending, hand_n=hand_n)
+            _, _, lo, hi = self._pending
+            return codec.build_mask([], pending_targets=(lo, hi), hand_n=hand_n)
 
         engine_actions = self.game.legal_actions()
         # Remap play/discard subsets from engine-hand indices to canonical slots.
@@ -145,18 +159,25 @@ class BalatroEnv(gym.Env):
                 info["episode_stats"] = self._episode_stats(won=isinstance(e, RunWon))
         return obs, reward, terminated, False, info
 
+    def _engine_targets(self, payload) -> tuple[int, ...]:
+        if any(p >= len(self._hand_order) for p in payload):
+            raise IllegalActionError("target position beyond hand")
+        return tuple(self._hand_order[p] for p in payload)
+
     def _dispatch(self, kind: str, payload):
         from balatro_gym.engine import (
             BuyPack,
             BuyShopCard,
             BuyVoucher,
             LeaveShop,
-            PickPackItem,
             Reroll,
+            RerollBoss,
             SelectBlind,
+            SellConsumable,
             SellJoker,
             SkipBlind,
             SkipPack,
+            SwapJokers,
         )
 
         game = self.game
@@ -165,14 +186,14 @@ class BalatroEnv(gym.Env):
         if kind == "select_targets":
             if self._pending is None:
                 raise IllegalActionError("no pending consumable")
-            slot, lo, hi = self._pending
+            pkind, index, lo, hi = self._pending
             if not (lo <= len(payload) <= hi):
                 raise IllegalActionError("bad target arity")
-            if any(p >= len(self._hand_order) for p in payload):
-                raise IllegalActionError("target position beyond hand")
-            engine_targets = tuple(self._hand_order[p] for p in payload)
+            targets = self._engine_targets(payload)
             self._pending = None
-            return game.apply(UseConsumable(slot, engine_targets))
+            if pkind == "pack":
+                return game.apply(PickPackItem(index, targets))
+            return game.apply(UseConsumable(index, targets))
 
         if self._pending is not None:
             raise IllegalActionError("must select targets first")
@@ -185,24 +206,40 @@ class BalatroEnv(gym.Env):
             eff = consumable_def(inst.id).effect
             lo, hi = eff.target_arity
             if lo > 0:
-                rnd = self.run.round
-                if self.run.phase != Phase.PLAYING or rnd is None or not rnd.hand:
+                hand = self._visible_hand()
+                if not hand or len(hand) < lo:
                     raise IllegalActionError("targeted consumable needs a hand")
-                self._pending = (slot, lo, min(hi, len(rnd.hand)))
+                if not eff.can_use(self.run):
+                    raise IllegalActionError("consumable cannot be used now")
+                self._pending = ("consumable", slot, lo, min(hi, len(hand)))
                 return []  # env-level micro-phase; no engine step
             return game.apply(UseConsumable(slot))
 
+        if kind == "pick_pack":
+            pack = self.run.open_pack
+            if pack is None or not (0 <= payload < len(pack.option_kinds)):
+                raise IllegalActionError("no such pack option")
+            okind = pack.option_kinds[payload]
+            if okind in ("tarot", "planet", "spectral"):
+                lo, hi = consumable_def(pack.option_ids[payload]).effect.target_arity
+                if lo > 0:
+                    from balatro_gym.engine.shop import pack_pick_legal
+
+                    if not pack_pick_legal(self.run, payload):
+                        raise IllegalActionError("pack option cannot be used")
+                    self._pending = ("pack", payload, lo, min(hi, len(pack.hand)))
+                    return []
+            return game.apply(PickPackItem(payload))
+
         if kind in ("play", "discard"):
-            if any(p >= len(self._hand_order) for p in payload):
-                raise IllegalActionError("card position beyond hand")
-            engine_idxs = tuple(sorted(self._hand_order[p] for p in payload))
+            engine_idxs = tuple(sorted(self._engine_targets(payload)))
             act = PlayHand(engine_idxs) if kind == "play" else Discard(engine_idxs)
             return game.apply(act)
 
         simple = {
             "select_blind": SelectBlind,
             "skip_blind": SkipBlind,
-            "buy_voucher": BuyVoucher,
+            "reroll_boss": RerollBoss,
             "reroll": Reroll,
             "leave_shop": LeaveShop,
             "skip_pack": SkipPack,
@@ -211,12 +248,16 @@ class BalatroEnv(gym.Env):
             return game.apply(simple[kind]())
         if kind == "sell_joker":
             return game.apply(SellJoker(payload))
+        if kind == "sell_consumable":
+            return game.apply(SellConsumable(payload))
+        if kind == "swap_jokers":
+            return game.apply(SwapJokers(payload))
         if kind == "buy_card":
             return game.apply(BuyShopCard(payload))
         if kind == "buy_pack":
             return game.apply(BuyPack(payload))
-        if kind == "pick_pack":
-            return game.apply(PickPackItem(payload))
+        if kind == "buy_voucher":
+            return game.apply(BuyVoucher(payload))
         raise IllegalActionError(f"reserved/unknown action kind {kind!r}")
 
     # ------------------------------------------------------------------ obs/info
@@ -245,6 +286,8 @@ class BalatroEnv(gym.Env):
             "hands_played": run.stats.get("hands_played_run", 0),
             "jokers_final": [j.id for j in run.jokers],
             "steps": self._episode_steps,
+            "deck": run.deck_id,
+            "stake": str(run.stake),
         }
 
     # ------------------------------------------------------------------ render
@@ -255,6 +298,7 @@ class BalatroEnv(gym.Env):
         lines = [
             f"ante {run.ante} | blind {run.blind_index} | phase {self._env_phase()}"
             f" | ${run.money} | jokers: {[j.id for j in run.jokers]}"
+            f" | boss: {run.ante_boss} | tags: {[t.id for t in run.tags]}"
         ]
         rnd = run.round
         if rnd is not None:
@@ -262,20 +306,20 @@ class BalatroEnv(gym.Env):
                 f"score {rnd.chips_scored:.0f}/{rnd.chips_needed:.0f}"
                 f" | hands {rnd.hands_left} | discards {rnd.discards_left}"
             )
-            hand = " ".join(
-                f"[{slot}]{rnd.hand[i]!r}" for slot, i in enumerate(self._hand_order)
-            )
-            lines.append(f"hand: {hand}")
+        hand = self._visible_hand()
+        if hand:
+            lines.append("hand: " + " ".join(f"[{slot}]{hand[i]!r}" for slot, i in enumerate(self._hand_order)))
         shop = run.shop
         if shop is not None:
-            items = ", ".join(f"{s.item_id}(${s.cost})" for s in shop.card_slots)
+            items = ", ".join(f"{s.item_id or s.card!r}(${s.cost})" for s in shop.card_slots)
             packs = ", ".join(f"{p.pack_id}(${p.cost})" for p in shop.pack_slots)
-            lines.append(f"shop: {items} | packs: {packs} | voucher: {shop.voucher}"
+            lines.append(f"shop: {items} | packs: {packs} | vouchers: {shop.vouchers}"
                          f" | reroll ${shop.reroll_cost}")
-            if shop.open_pack:
-                opts = ", ".join(
-                    f"[{i}]{shop.open_pack.option_ids[i] or shop.open_pack.option_cards[i]!r}"
-                    for i in range(len(shop.open_pack.option_kinds))
-                )
-                lines.append(f"pack ({shop.open_pack.picks_left} picks): {opts}")
+        pack = run.open_pack
+        if pack is not None:
+            opts = ", ".join(
+                f"[{i}]{pack.option_ids[i] or pack.option_cards[i]!r}"
+                for i in range(len(pack.option_kinds))
+            )
+            lines.append(f"pack ({pack.picks_left} picks): {opts}")
         return "\n".join(lines)

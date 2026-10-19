@@ -20,7 +20,6 @@ from balatro_gym.engine import (
 )
 from balatro_gym.engine.round import discard as engine_discard
 from balatro_gym.engine.state import RoundState
-
 from tests.helpers import card, cards, joker, make_run
 
 
@@ -456,25 +455,22 @@ class TestIceCream:
         assert res.score == 256
         assert run.jokers[0].state["chips"] == 95
 
-    def test_last_lick_then_melts_at_round_end(self):
+    def test_last_lick_then_melts(self):
         run = make_run(jokers=[joker("j_ice_cream", state={"chips": 5})])
         res = score_play(run, cards("9S", "9H"))  # gives 5: (28+5) x 2 = 66
         assert res.score == 66
-        assert run.jokers[0].state["chips"] == 0
-        run_round_end(run)
-        assert run.jokers == []
+        assert run.jokers == []  # melts right after the hand that empties it
 
     def test_survives_round_end_with_chips_left(self):
         run = make_run(jokers=[joker("j_ice_cream", state={"chips": 95})])
         run_round_end(run)
         assert len(run.jokers) == 1
 
-    def test_melted_contributes_nothing_mid_round(self):
-        # Hit 0 mid-round: stays in the slot until round end but adds nothing.
+    def test_melted_contributes_nothing(self):
         run = make_run(jokers=[joker("j_ice_cream", state={"chips": 0})])
         res = score_play(run, cards("9S", "9H"))
         assert res.score == 56
-        assert len(run.jokers) == 1
+        assert len(run.jokers) == 0
 
     def test_mid_hand_decay_does_not_break_scoring(self):
         # Ice Cream reaching 0 during stage 2 must not disturb the joker to
@@ -482,7 +478,7 @@ class TestIceCream:
         run = make_run(jokers=[joker("j_ice_cream", state={"chips": 5}), joker("j_joker")])
         res = score_play(run, cards("9S", "9H"))
         assert res.score == 198
-        assert len(run.jokers) == 2  # removal deferred to round end
+        assert [j.id for j in run.jokers] == ["j_joker"]  # removal deferred past scoring
 
     def test_blueprint_pays_twice_decays_once(self):
         # (28 + 100 + 100) x 2 = 456; single decrement.

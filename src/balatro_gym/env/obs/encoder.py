@@ -3,6 +3,9 @@
 IDs go in dedicated int64 vectors for embedding lookup; everything else is
 dense float32. Buffers are preallocated per env instance and rewritten in
 place each step; encode() returns copies (vector envs stack them).
+
+Vocabularies are built from the sorted registry keys (0 = empty), so they
+are stable for a fixed content set.
 """
 
 from __future__ import annotations
@@ -13,46 +16,55 @@ from gymnasium import spaces
 from balatro_gym.engine import (
     BOSSES,
     CONSUMABLES,
+    DECKS,
     JOKERS,
     PACKS,
+    STAKE_ORDER,
+    TAGS,
     VOUCHERS,
     Card,
     Edition,
     Enhancement,
     HandType,
-    Phase,
     Rank,
     RunState,
     Seal,
     Suit,
     boss_def,
+    cardops,
+    joker_active,
 )
 from balatro_gym.engine.levels import hand_value
+from balatro_gym.engine.types import STICKER_ETERNAL, STICKER_PERISHABLE, STICKER_RENTAL
 
 from . import norms
 
-HAND_SLOTS = 8
+HAND_SLOTS = 12
 CARD_FEATS = 40
-JOKER_SLOTS = 6
-JOKER_FEATS = 8
-CONSUMABLE_SLOTS = 3
-SHOP_CARD_SLOTS = 3
+JOKER_SLOTS = 10
+JOKER_FEATS = 12
+CONSUMABLE_SLOTS = 6
+SHOP_CARD_SLOTS = 4
+SHOP_CARD_FEATS = 8   # kind one-hot(5) + cost + present + free
+PACK_SLOT_FEATS = 10  # category(5) + size(3) + cost + present
+VOUCHER_SLOTS = 3
 PACK_OPTIONS = 5
-SHOP_FEATS = 3 * 5 + 2 * 10 + 2 + 1  # cards + packs + voucher + reroll = 38
+SHOP_FEATS = SHOP_CARD_SLOTS * SHOP_CARD_FEATS + 2 * PACK_SLOT_FEATS + VOUCHER_SLOTS + 2  # + reroll, free rerolls
 DECK_FEATS = 72
-CONTEXT_FEATS = 32
-BOSS_FEATS = 12
+CONTEXT_FEATS = 48
+BOSS_FEATS = 16
 
 _ENH_LIST = list(Enhancement)          # 9 incl. NONE
 _EDITION_CARD = [Edition.NONE, Edition.FOIL, Edition.HOLO, Edition.POLY]
 _EDITION_JOKER = [Edition.FOIL, Edition.HOLO, Edition.POLY, Edition.NEGATIVE]
 _SEAL_LIST = list(Seal)                # 5 incl. NONE
-_PHASES = [
-    Phase.BLIND_SELECT, Phase.PLAYING, Phase.SHOP, Phase.PACK_OPEN,
-]  # + env-level TARGET + terminal -> 6 one-hot slots
 _PACK_CATEGORIES = ["standard", "arcana", "celestial", "buffoon", "spectral"]
 _PACK_SIZES = ["normal", "jumbo", "mega"]
 _OPTION_KINDS = ["card", "joker", "tarot", "planet", "spectral"]
+_SHOP_KINDS = ["joker", "tarot", "planet", "spectral", "card"]
+_PHASE_INDEX = {
+    "blind_select": 0, "playing": 1, "shop": 2, "pack_open": 3, "target": 4, "terminal": 5,
+}
 
 
 def canonical_order(hand: list[Card]) -> list[int]:
@@ -71,6 +83,8 @@ class ObsEncoder:
         self.consumable_index = {cid: i + 1 for i, cid in enumerate(sorted(CONSUMABLES))}
         self.boss_index = {bid: i + 1 for i, bid in enumerate(sorted(BOSSES))}
         self.voucher_index = {vid: i + 1 for i, vid in enumerate(sorted(VOUCHERS))}
+        self.tag_index = {tid: i + 1 for i, tid in enumerate(sorted(TAGS))}
+        self.deck_index = {did: i + 1 for i, did in enumerate(sorted(DECKS))}
         # Combined item catalog for shop/pack slots: jokers then consumables.
         self.item_index = {}
         for jid, idx in self.joker_index.items():
@@ -79,22 +93,32 @@ class ObsEncoder:
         for cid, idx in self.consumable_index.items():
             self.item_index[("consumable", cid)] = off + idx
         self.n_items = 1 + len(self.joker_index) + len(self.consumable_index)
+        n_v = len(self.voucher_index)
+        n_t = len(self.tag_index)
 
         self._buf = {
             "hand": np.zeros((HAND_SLOTS, CARD_FEATS), dtype=np.float32),
             "joker_ids": np.zeros(JOKER_SLOTS, dtype=np.int64),
             "joker_state": np.zeros((JOKER_SLOTS, JOKER_FEATS), dtype=np.float32),
             "consumable_ids": np.zeros(CONSUMABLE_SLOTS, dtype=np.int64),
+            "consumable_state": np.zeros((CONSUMABLE_SLOTS, 2), dtype=np.float32),
             "shop": np.zeros(SHOP_FEATS, dtype=np.float32),
-            "shop_item_ids": np.zeros(SHOP_CARD_SLOTS + 1, dtype=np.int64),  # +1 = voucher
-            "pack": np.zeros((PACK_OPTIONS, len(_OPTION_KINDS) + 1), dtype=np.float32),
+            "shop_item_ids": np.zeros(SHOP_CARD_SLOTS, dtype=np.int64),
+            "shop_cards": np.zeros((SHOP_CARD_SLOTS, CARD_FEATS), dtype=np.float32),
+            "shop_voucher_ids": np.zeros(VOUCHER_SLOTS, dtype=np.int64),
+            "pack": np.zeros((PACK_OPTIONS, len(_OPTION_KINDS) + 1 + 4), dtype=np.float32),
             "pack_item_ids": np.zeros(PACK_OPTIONS, dtype=np.int64),
             "pack_cards": np.zeros((PACK_OPTIONS, CARD_FEATS), dtype=np.float32),
             "hand_levels": np.zeros((len(HandType), 3), dtype=np.float32),
             "deck": np.zeros(DECK_FEATS, dtype=np.float32),
             "context": np.zeros(CONTEXT_FEATS, dtype=np.float32),
             "boss_id": np.zeros(1, dtype=np.int64),
+            "ante_boss_id": np.zeros(1, dtype=np.int64),
             "boss": np.zeros(BOSS_FEATS, dtype=np.float32),
+            "vouchers": np.zeros(n_v, dtype=np.float32),
+            "tags": np.zeros(n_t, dtype=np.float32),
+            "blind_tag_ids": np.zeros(2, dtype=np.int64),
+            "deck_id": np.zeros(1, dtype=np.int64),
         }
 
     # ------------------------------------------------------------------ space
@@ -110,24 +134,32 @@ class ObsEncoder:
                 "consumable_ids": spaces.MultiDiscrete(
                     [1 + len(self.consumable_index)] * CONSUMABLE_SLOTS, dtype=np.int64
                 ),
+                "consumable_state": spaces.Box(0, 1, (CONSUMABLE_SLOTS, 2), f32),
                 "shop": spaces.Box(0, 10, (SHOP_FEATS,), f32),
-                "shop_item_ids": spaces.MultiDiscrete(
-                    [self.n_items] * SHOP_CARD_SLOTS + [1 + len(self.voucher_index)],
-                    dtype=np.int64,
+                "shop_item_ids": spaces.MultiDiscrete([self.n_items] * SHOP_CARD_SLOTS, dtype=np.int64),
+                "shop_cards": spaces.Box(0, 1, (SHOP_CARD_SLOTS, CARD_FEATS), f32),
+                "shop_voucher_ids": spaces.MultiDiscrete(
+                    [1 + len(self.voucher_index)] * VOUCHER_SLOTS, dtype=np.int64
                 ),
-                "pack": spaces.Box(0, 1, (PACK_OPTIONS, len(_OPTION_KINDS) + 1), f32),
+                "pack": spaces.Box(0, 1, (PACK_OPTIONS, len(_OPTION_KINDS) + 1 + 4), f32),
                 "pack_item_ids": spaces.MultiDiscrete([self.n_items] * PACK_OPTIONS, dtype=np.int64),
                 "pack_cards": spaces.Box(0, 1, (PACK_OPTIONS, CARD_FEATS), f32),
                 "hand_levels": spaces.Box(0, 10, (len(HandType), 3), f32),
-                "deck": spaces.Box(0, 1, (DECK_FEATS,), f32),
+                "deck": spaces.Box(0, 10, (DECK_FEATS,), f32),
                 "context": spaces.Box(-1, 10, (CONTEXT_FEATS,), f32),
                 "boss_id": spaces.MultiDiscrete([1 + len(self.boss_index)], dtype=np.int64),
+                "ante_boss_id": spaces.MultiDiscrete([1 + len(self.boss_index)], dtype=np.int64),
                 "boss": spaces.Box(0, 6, (BOSS_FEATS,), f32),
+                "vouchers": spaces.Box(0, 1, (len(self.voucher_index),), f32),
+                "tags": spaces.Box(0, 1, (len(self.tag_index),), f32),
+                "blind_tag_ids": spaces.MultiDiscrete([1 + len(self.tag_index)] * 2, dtype=np.int64),
+                "deck_id": spaces.MultiDiscrete([1 + len(self.deck_index)], dtype=np.int64),
             }
         )
 
     # ---------------------------------------------------------------- encoding
-    def _card_row(self, row: np.ndarray, card: Card, debuffed: bool, face_down: bool) -> None:
+    def _card_row(self, row: np.ndarray, card: Card, debuffed: bool, face_down: bool,
+                  forced: bool = False) -> None:
         row.fill(0.0)
         if face_down:
             # Face-down cards expose nothing but presence + the flag.
@@ -136,7 +168,7 @@ class ObsEncoder:
             return
         row[int(card.rank) - 2] = 1.0                      # 0-12 rank
         row[13 + int(card.suit)] = 1.0                     # 13-16 suit
-        row[17] = card.base_chips / 61.0                   # chips (stone+extra can exceed 11)
+        row[17] = min(card.base_chips / 100.0, 1.0)        # chips (stone+extra can exceed 11)
         row[18 + _ENH_LIST.index(card.enhancement)] = 1.0  # 18-26 enhancement
         ed = card.edition if card.edition in _EDITION_CARD else Edition.NONE
         row[27 + _EDITION_CARD.index(ed)] = 1.0            # 27-30 edition
@@ -144,7 +176,7 @@ class ObsEncoder:
         row[36] = 0.0                                      # face_down
         row[37] = 1.0                                      # present
         row[38] = 1.0 if debuffed else 0.0
-        # 39 pad
+        row[39] = 1.0 if forced else 0.0                   # Cerulean Bell
 
     def encode(
         self,
@@ -152,85 +184,110 @@ class ObsEncoder:
         *,
         env_phase: str,
         hand_order: list[int],
-        pending: tuple[int, int, int] | None,
+        pending: tuple | None,
         enable_skip: bool,
     ) -> dict:
         b = self._buf
         rnd = run.round
         boss = (
-            boss_def(rnd.boss_id).effect if (rnd is not None and rnd.boss_id) else None
+            boss_def(rnd.boss_id).effect
+            if (rnd is not None and rnd.boss_id and not rnd.boss_state.get("disabled")) else None
         )
         face_down = set(rnd.face_down_uids) if rnd is not None else set()
+        forced_uid = rnd.boss_state.get("forced_uid") if rnd is not None else None
 
-        # --- hand (canonical order) ---
+        # --- visible hand (round hand, or the hand dealt by an open pack) ---
         b["hand"].fill(0.0)
-        if rnd is not None:
+        hand = cardops.current_hand(run)
+        if hand:
             for slot, hi in enumerate(hand_order[:HAND_SLOTS]):
-                card = rnd.hand[hi]
-                debuffed = boss.card_debuffed(run, card) if boss else False
-                self._card_row(b["hand"][slot], card, debuffed, card.uid in face_down)
+                card = hand[hi]
+                debuffed = boss.card_debuffed(run, card) if (boss and rnd is not None) else False
+                self._card_row(b["hand"][slot], card, debuffed, card.uid in face_down,
+                               forced=card.uid == forced_uid)
 
         # --- jokers ---
         b["joker_ids"].fill(0)
         b["joker_state"].fill(0.0)
+        hidden = bool(rnd is not None and rnd.boss_state.get("jokers_hidden"))
         for i, j in enumerate(run.jokers[:JOKER_SLOTS]):
-            b["joker_ids"][i] = self.joker_index.get(j.id, 0)
             row = b["joker_state"][i]
+            row[7] = 1.0  # present
+            if hidden:
+                row[11] = 1.0  # face down (Amber Acorn)
+                continue
+            b["joker_ids"][i] = self.joker_index.get(j.id, 0)
             if j.edition in _EDITION_JOKER:
                 row[_EDITION_JOKER.index(j.edition)] = 1.0
             row[4] = min(j.sell_value, 20) / 20.0
             counter = 0.0
-            for v in j.state.values():
+            for k, v in j.state.items():
                 if isinstance(v, (int, float)) and not isinstance(v, bool):
                     counter = max(counter, float(v))
             row[5] = norms.norm_counter(counter)
-            row[6] = 1.0 if "eternal" in j.stickers else 0.0
-            row[7] = 1.0  # present
+            row[6] = 1.0 if STICKER_ETERNAL in j.stickers else 0.0
+            row[8] = 1.0 if STICKER_PERISHABLE in j.stickers else 0.0
+            row[9] = 1.0 if STICKER_RENTAL in j.stickers else 0.0
+            row[10] = 0.0 if joker_active(run, j) else 1.0  # debuffed / disabled
+            # 11 face-down
 
         # --- consumables ---
         b["consumable_ids"].fill(0)
+        b["consumable_state"].fill(0.0)
         for i, c in enumerate(run.consumables[:CONSUMABLE_SLOTS]):
             b["consumable_ids"][i] = self.consumable_index.get(c.id, 0)
+            b["consumable_state"][i][0] = 1.0 if c.edition == Edition.NEGATIVE else 0.0
+            b["consumable_state"][i][1] = min(c.sell_value, 10) / 10.0
 
         # --- shop ---
         b["shop"].fill(0.0)
         b["shop_item_ids"].fill(0)
+        b["shop_cards"].fill(0.0)
+        b["shop_voucher_ids"].fill(0)
         shop = run.shop
         if shop is not None:
             for i, item in enumerate(shop.card_slots[:SHOP_CARD_SLOTS]):
-                base = i * 5
-                kind_idx = {"joker": 0, "tarot": 1, "planet": 2}.get(item.kind, 2)
-                b["shop"][base + kind_idx] = 1.0
-                b["shop"][base + 3] = item.cost / 10.0
-                b["shop"][base + 4] = 1.0  # present
-                key = ("joker", item.item_id) if item.kind == "joker" else ("consumable", item.item_id)
-                b["shop_item_ids"][i] = self.item_index.get(key, 0)
+                base = i * SHOP_CARD_FEATS
+                b["shop"][base + _SHOP_KINDS.index(item.kind)] = 1.0
+                b["shop"][base + 5] = min(item.cost / 20.0, 1.0)
+                b["shop"][base + 6] = 1.0  # present
+                b["shop"][base + 7] = 1.0 if item.cost == 0 else 0.0
+                if item.kind == "card" and item.card is not None:
+                    self._card_row(b["shop_cards"][i], item.card, False, False)
+                else:
+                    key = ("joker", item.item_id) if item.kind == "joker" else ("consumable", item.item_id)
+                    b["shop_item_ids"][i] = self.item_index.get(key, 0)
+            off = SHOP_CARD_SLOTS * SHOP_CARD_FEATS
             for i, offer in enumerate(shop.pack_slots[:2]):
-                base = 15 + i * 10
+                base = off + i * PACK_SLOT_FEATS
                 defn = PACKS[offer.pack_id]
                 b["shop"][base + _PACK_CATEGORIES.index(defn.category)] = 1.0
                 size = offer.pack_id.rsplit("_", 1)[-1]
                 if size in _PACK_SIZES:
                     b["shop"][base + 5 + _PACK_SIZES.index(size)] = 1.0
-                b["shop"][base + 8] = offer.cost / 10.0
+                b["shop"][base + 8] = min(offer.cost / 20.0, 1.0)
                 b["shop"][base + 9] = 1.0
-            b["shop"][35] = 1.0 if shop.voucher else 0.0
-            b["shop"][36] = 1.0 if shop.voucher else 0.0  # voucher cost / 10 == 1.0
-            b["shop"][37] = shop.reroll_cost / 10.0
-            b["shop_item_ids"][SHOP_CARD_SLOTS] = (
-                self.voucher_index.get(shop.voucher, 0) if shop.voucher else 0
-            )
+            off += 2 * PACK_SLOT_FEATS
+            for i, vid in enumerate(shop.vouchers[:VOUCHER_SLOTS]):
+                b["shop"][off + i] = 1.0
+                b["shop_voucher_ids"][i] = self.voucher_index.get(vid, 0)
+            off += VOUCHER_SLOTS
+            b["shop"][off] = min(shop.reroll_cost / 20.0, 1.0)
+            b["shop"][off + 1] = min(shop.free_rerolls, 3) / 3.0
 
         # --- open pack ---
         b["pack"].fill(0.0)
         b["pack_item_ids"].fill(0)
         b["pack_cards"].fill(0.0)
-        pack = shop.open_pack if shop is not None else None
+        pack = run.open_pack
         if pack is not None:
             for i in range(min(len(pack.option_kinds), PACK_OPTIONS)):
                 kind = pack.option_kinds[i]
                 b["pack"][i][_OPTION_KINDS.index(kind)] = 1.0
                 b["pack"][i][len(_OPTION_KINDS)] = 1.0  # present
+                ed = Edition(pack.option_editions[i]) if i < len(pack.option_editions) else Edition.NONE
+                if ed in _EDITION_JOKER:
+                    b["pack"][i][len(_OPTION_KINDS) + 1 + _EDITION_JOKER.index(ed)] = 1.0
                 if kind == "card":
                     card = pack.option_cards[i]
                     if card is not None:
@@ -259,11 +316,7 @@ class ObsEncoder:
         # --- context ---
         ctx = b["context"]
         ctx.fill(0.0)
-        phase_idx = {
-            "blind_select": 0, "playing": 1, "shop": 2, "pack_open": 3,
-            "target": 4, "terminal": 5,
-        }[env_phase]
-        ctx[phase_idx] = 1.0
+        ctx[_PHASE_INDEX[env_phase]] = 1.0
         ctx[6] = run.ante / 8.0
         blind_idx = min(run.blind_index, 2)
         ctx[7 + blind_idx] = 1.0  # 7-9 small/big/boss
@@ -276,26 +329,40 @@ class ObsEncoder:
         ctx[15] = norms.norm_money(run.money)
         ctx[16] = norms.norm_money_linear(run.money)
         ctx[17] = max(run.joker_slots - len(run.jokers), 0) / 6.0
-        ctx[18] = max(run.consumable_slots - len(run.consumables), 0) / 3.0
-        ctx[19] = run.hand_size / 12.0
+        ctx[18] = max(run.consumable_slots - cardops.consumables_used_slots(run), 0) / 3.0
+        ctx[19] = cardops.effective_hand_size(run) / 12.0
         ctx[20] = (pack.picks_left / 5.0) if pack is not None else 0.0
         if pending is not None:
             ctx[21] = 1.0
-            ctx[22] = pending[1] / 3.0
-            ctx[23] = pending[2] / 3.0
-        ctx[24] = 1.0 if enable_skip else 0.0
-        ctx[25] = len(remaining) / 52.0
-        ctx[26] = len(rnd.hand) / 10.0 if rnd is not None else 0.0
-        ctx[27] = min(len(run.tags), 5) / 5.0
-        ctx[28] = min(run.stats.get("hands_played_run", 0), 100) / 100.0
-        # 29-31 pad
+            ctx[22] = pending[2] / 3.0
+            ctx[23] = pending[3] / 3.0
+            ctx[24] = 1.0 if pending[0] == "pack" else 0.0
+        ctx[25] = 1.0 if enable_skip else 0.0
+        ctx[26] = min(len(remaining), 60) / 60.0
+        ctx[27] = min(len(hand), 12) / 12.0 if hand else 0.0
+        ctx[28] = min(len(run.tags), 5) / 5.0
+        ctx[29] = min(run.stats.get("hands_played_run", 0), 100) / 100.0
+        ctx[30] = min(run.money, 0) / 20.0  # debt (Credit Card), <= 0
+        ctx[31] = run.interest_cap / 100.0
+        ctx[32] = run.shop_card_slots / 4.0
+        ctx[33] = cardops.effective_hands(run) / 10.0
+        ctx[34] = cardops.effective_discards(run) / 10.0
+        ctx[35] = min(run.stats.get("blinds_skipped", 0), 8) / 8.0
+        ctx[36] = 1.0 if run.mods.get("plasma") else 0.0
+        ctx[37] = 1.0 if run.mods.get("no_interest") else 0.0
+        ctx[38] = min(run.chance_multiplier, 4) / 4.0
+        stake_i = STAKE_ORDER.index(run.stake)
+        ctx[39] = stake_i / 7.0
+        # 40-47: stake one-hot
+        ctx[40 + stake_i] = 1.0
 
-        # --- boss ---
+        # --- boss (current round) and the ante's pre-rolled boss ---
         b["boss_id"][0] = self.boss_index.get(rnd.boss_id, 0) if (rnd and rnd.boss_id) else 0
+        b["ante_boss_id"][0] = self.boss_index.get(run.ante_boss, 0) if run.ante_boss else 0
         bf = b["boss"]
         bf.fill(0.0)
         if boss is not None and rnd is not None:
-            # Probe with a plain rank-10 card of each suit.
+            # Probe with a plain rank-10 card of each suit and a plain King.
             debuffed_suits = [
                 s for s in Suit
                 if boss.card_debuffed(run, Card(uid=-1, rank=Rank.TEN, suit=s))
@@ -320,7 +387,31 @@ class ObsEncoder:
             bf[7] = forced / 5.0
             bf[8] = 1.0 if rnd.hands_left == 1 and run.hands_per_round > 1 else 0.0
             bf[9] = 1.0 if boss.is_finisher else 0.0
-            # 10-11 pad
+            bf[10] = 1.0 if boss.card_debuffed(run, Card(uid=-1, rank=Rank.KING, suit=Suit.SPADES)) else 0.0
+            bf[11] = 1.0 if boss.draw_count(run) else 0.0
+            bf[12] = 1.0 if rnd.boss_state.get("disabled_joker_uid") is not None else 0.0
+            bf[13] = 1.0 if forced_uid is not None else 0.0
+            bf[14] = 1.0 if hidden else 0.0
+            bf[15] = 1.0 if rnd.boss_state.get("verdant") else 0.0
+        elif rnd is not None and rnd.boss_id and rnd.boss_state.get("disabled"):
+            bf[0] = 1.0
+
+        # --- owned vouchers, held tags, upcoming skip tags, deck ---
+        b["vouchers"].fill(0.0)
+        for vid in run.vouchers:
+            i = self.voucher_index.get(vid)
+            if i:
+                b["vouchers"][i - 1] = 1.0
+        b["tags"].fill(0.0)
+        for t in run.tags:
+            i = self.tag_index.get(t.id)
+            if i:
+                b["tags"][i - 1] = min(b["tags"][i - 1] + 0.5, 1.0)
+        b["blind_tag_ids"].fill(0)
+        for k in range(2):
+            t = run.blind_tags[k] if k < len(run.blind_tags) else None
+            b["blind_tag_ids"][k] = self.tag_index.get(t.id, 0) if t else 0
+        b["deck_id"][0] = self.deck_index.get(run.deck_id, 0)
 
         return {k: v.copy() for k, v in b.items()}
 

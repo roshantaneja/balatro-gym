@@ -69,6 +69,6 @@ class _Castle(JokerEffect):
 register_joker(
     JokerDef(
         "j_castle", "Castle", Rarity.UNCOMMON, 6, _Castle(),
-        init_state={"chips": 0, "suit": 0},
+        init_state={"chips": 0, "suit": 0}, perishable_compat=False,
     )
 )

@@ -21,6 +21,11 @@ class SkipBlind(Action):
 
 
 @dataclass(frozen=True, slots=True)
+class RerollBoss(Action):
+    """Director's Cut / Retcon: re-roll the ante's boss blind for $10."""
+
+
+@dataclass(frozen=True, slots=True)
 class PlayHand(Action):
     indices: tuple[int, ...]  # positions in round.hand, 1-5 of them
 
@@ -36,9 +41,21 @@ class SellJoker(Action):
 
 
 @dataclass(frozen=True, slots=True)
+class SellConsumable(Action):
+    slot: int
+
+
+@dataclass(frozen=True, slots=True)
+class SwapJokers(Action):
+    """Swap the jokers in slots `slot` and `slot + 1` (board reordering)."""
+
+    slot: int
+
+
+@dataclass(frozen=True, slots=True)
 class UseConsumable(Action):
     slot: int
-    targets: tuple[int, ...] = field(default=())  # positions in round.hand
+    targets: tuple[int, ...] = field(default=())  # positions in the visible hand
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,7 +70,7 @@ class BuyPack(Action):
 
 @dataclass(frozen=True, slots=True)
 class BuyVoucher(Action):
-    pass
+    slot: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,7 +86,7 @@ class LeaveShop(Action):
 @dataclass(frozen=True, slots=True)
 class PickPackItem(Action):
     index: int
-    targets: tuple[int, ...] = field(default=())  # hand targets for arcana-style picks
+    targets: tuple[int, ...] = field(default=())  # pack-hand targets for arcana/spectral picks
 
 
 @dataclass(frozen=True, slots=True)

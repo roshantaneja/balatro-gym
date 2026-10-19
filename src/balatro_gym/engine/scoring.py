@@ -1,6 +1,6 @@
-"""The scoring pipeline: a direct transcription of the wiki's activation sequence.
+"""The scoring pipeline: a direct transcription of the game's activation sequence.
 
-Stages (Guide: Activation Sequence):
+Stages:
   1. Boss effects (Flint halves base; Arm de-levels — pre-base)
   2. On-Played jokers (and their state updates: Green Joker, Ride the Bus, ...)
   3. Scored cards left->right; per card, retrigger-looped:
@@ -11,11 +11,16 @@ Stages (Guide: Activation Sequence):
   5. Per joker slot left->right:
        Foil/Holo -> on_independent -> on_other_joker pass (Baseball) -> Poly
      Independent jokers are never retriggered.
-  6. Observatory (voucher seam; no-op in v1)
-  7. Plasma balancing (deck seam; no-op in v1)
+  6. Observatory: x1.5 Mult per Planet in the consumable area that matches the
+     played hand type (run.mods["observatory"]).
+  7. Plasma balancing: chips and mult are averaged (run.mods["plasma"]).
 
 Every chips/mult/money mutation goes through ScoreContext and appends a
 ScoreEvent — the audit log is the fidelity contract, always on.
+
+Debuffed jokers (Perishable expiry, Crimson Heart) are filtered out of the
+slot list, so none of their hooks run. Boss effects are ignored when the boss
+has been disabled (Chicot, Luchador).
 """
 
 from __future__ import annotations
@@ -23,17 +28,26 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from .cards import Card
-from .effects import BossEffect, JokerEffect, boss_def, is_copy_slot, joker_def, resolve_joker
+from .effects import (
+    PLANET_FOR_HAND,
+    BossEffect,
+    JokerEffect,
+    active_jokers,
+    boss_def,
+    is_copy_slot,
+    joker_def,
+    resolve_joker,
+)
 from .hand_eval import DEFAULT_RULES, EvalRules, HandResult, evaluate_hand, is_face, suit_matches
 from .levels import hand_value
 from .state import JokerInst, RunState
-from .types import Edition, Enhancement, HandType, Seal, Suit
+from .types import Edition, Enhancement, Seal, Suit
 
 
 @dataclass(slots=True)
 class ScoreEvent:
     stage: str        # "base" | "on_played" | "card_scored[2]" | "card_scored[2]/retrigger:red_seal" | ...
-    source_kind: str  # "hand" | "boss" | "card" | "enhancement" | "seal" | "edition" | "joker"
+    source_kind: str  # "hand" | "boss" | "card" | "enhancement" | "seal" | "edition" | "joker" | "voucher" | "deck"
     source_id: str
     op: str           # "+c" | "+m" | "xm" | "+$" | "retrigger" | "info"
     amount: float
@@ -45,8 +59,20 @@ class ScoreContext:
     """Mutable accumulator threaded through one hand's scoring."""
 
     __slots__ = (
-        "run", "played", "held", "hand_result", "eval_rules", "boss",
-        "chips", "mult", "money_delta", "events", "_stage",
+        "_stage",
+        "boss",
+        "boss_triggered",
+        "chips",
+        "eval_rules",
+        "events",
+        "hand_result",
+        "held",
+        "is_copy",
+        "lucky_triggers",
+        "money_delta",
+        "mult",
+        "played",
+        "run",
     )
 
     def __init__(
@@ -69,6 +95,9 @@ class ScoreContext:
         self.money_delta = 0
         self.events: list[ScoreEvent] = []
         self._stage = "init"
+        self.is_copy = False          # True while dispatching a Blueprint/Brainstorm slot
+        self.boss_triggered = False   # Matador
+        self.lucky_triggers = 0       # Lucky Cat
 
     # ------------------------------------------------------------- mutators
     def _log(self, source_kind: str, source_id: str, op: str, amount: float) -> None:
@@ -100,6 +129,9 @@ class ScoreContext:
         self.money_delta += n
         self._log(source_kind, source_id, "+$", n)
 
+    def note(self, source_kind: str, source_id: str) -> None:
+        self._log(source_kind, source_id, "info", 0.0)
+
     # -------------------------------------------------------------- queries
     def chance(self, num: int, den: int) -> bool:
         """Seeded probability roll; Oops! All 6s multiplies num."""
@@ -119,6 +151,16 @@ class ScoreContext:
 
     def is_face(self, card: Card) -> bool:
         return is_face(card, self.eval_rules)
+
+    def is_final_hand(self) -> bool:
+        """True while scoring the last hand of the round (hands_left is
+        decremented after score_play returns)."""
+        rnd = self.run.round
+        return rnd is not None and rnd.hands_left == 1
+
+    def is_first_hand(self) -> bool:
+        rnd = self.run.round
+        return rnd is not None and rnd.hands_played == 0
 
 
 @dataclass(slots=True)
@@ -173,7 +215,7 @@ class ScoreResult:
 
 def fold_eval_rules(run: RunState) -> EvalRules:
     rules = DEFAULT_RULES
-    for j in run.jokers:
+    for j in active_jokers(run):
         rules = joker_def(j.id).effect.modify_eval_rules(rules, j)
     return rules
 
@@ -182,16 +224,23 @@ def _resolved_slots(run: RunState) -> list[tuple[int, JokerEffect, JokerInst]]:
     """(slot_index, effect, state_owner) for every slot that resolves."""
     out = []
     for i in range(len(run.jokers)):
-        r = resolve_joker(run.jokers, i)
+        r = resolve_joker(run.jokers, i, run)
         if r is not None:
             out.append((i, r[0], r[1]))
     return out
 
 
 def get_boss(run: RunState) -> BossEffect | None:
-    if run.round is not None and run.round.boss_id is not None:
-        return boss_def(run.round.boss_id).effect
+    rnd = run.round
+    if rnd is not None and rnd.boss_id is not None and not rnd.boss_state.get("disabled"):
+        return boss_def(rnd.boss_id).effect
     return None
+
+
+def _dispatch(ctx: ScoreContext, run: RunState, i: int, fn, *args) -> None:
+    ctx.is_copy = is_copy_slot(run.jokers, i)
+    fn(*args)
+    ctx.is_copy = False
 
 
 # ---------------------------------------------------------------------------
@@ -224,11 +273,16 @@ def score_play(
     ctx._stage = "boss"
     if boss is not None:
         boss.on_hand_played(ctx)  # The Arm de-levels BEFORE base is read
+        if any(ctx.is_debuffed(c) for c in played):
+            ctx.boss_triggered = True
 
     ctx._stage = "base"
     base_c, base_m = hand_value(hr.hand_type, run.hand_levels[hr.hand_type])
     if boss is not None:
-        base_c, base_m = boss.modify_base_score(ctx, base_c, base_m)  # The Flint
+        nc, nm = boss.modify_base_score(ctx, base_c, base_m)  # The Flint
+        if (nc, nm) != (base_c, base_m):
+            ctx.boss_triggered = True
+        base_c, base_m = nc, nm
     ctx.chips = base_c
     ctx.mult = base_m
     ctx._log("hand", hr.hand_type.name.lower(), "info", 0.0)
@@ -236,7 +290,7 @@ def score_play(
     # --- stage 2: on-played jokers + their state updates --------------------------
     ctx._stage = "on_played"
     for i, eff, owner in slots:
-        eff.on_hand_played(ctx, owner)
+        _dispatch(ctx, run, i, eff.on_hand_played, ctx, owner)
         if not is_copy_slot(run.jokers, i):
             eff.update_on_hand_played(run, run.jokers[i], played, hr)
 
@@ -274,7 +328,7 @@ def score_play(
             if card.enhancement == Enhancement.STEEL:
                 ctx.mul_mult(1.5, "enhancement", "steel")
             for i, eff, owner in slots:
-                eff.on_card_held(ctx, owner, card)
+                _dispatch(ctx, run, i, eff.on_card_held, ctx, owner, card)
 
     # --- stage 5: joker editions + independent + on-other-joker + poly -------------
     for i, eff, owner in slots:
@@ -284,15 +338,30 @@ def score_play(
             ctx.add_chips(50, "edition", "foil")
         elif inst.edition == Edition.HOLO:
             ctx.add_mult(10, "edition", "holo")
-        eff.on_independent(ctx, owner)
+        _dispatch(ctx, run, i, eff.on_independent, ctx, owner)
         # Baseball-style pass: every effect gets a look at this joker.
         for k, eff2, owner2 in slots:
             if k != i:
-                eff2.on_other_joker(ctx, owner2, inst)
+                _dispatch(ctx, run, k, eff2.on_other_joker, ctx, owner2, inst)
         if inst.edition == Edition.POLY:
             ctx.mul_mult(1.5, "edition", "poly")
 
-    # --- stages 6 & 7: voucher/deck seams (no-op in v1) ------------------------------
+    # --- stage 6: Observatory -------------------------------------------------------
+    obs_x = run.mods.get("observatory", 0)
+    if obs_x:
+        ctx._stage = "observatory"
+        planet_id = PLANET_FOR_HAND.get(hr.hand_type)
+        for c in run.consumables:
+            if planet_id is not None and c.id == planet_id:
+                ctx.mul_mult(obs_x, "voucher", "observatory")
+
+    # --- stage 7: Plasma balancing --------------------------------------------------
+    if run.mods.get("plasma"):
+        ctx._stage = "plasma"
+        avg = (ctx.chips + ctx.mult) / 2.0
+        ctx.chips = avg
+        ctx.mult = avg
+        ctx._log("deck", "plasma", "info", avg)
 
     score = float(int(ctx.chips * ctx.mult))  # floor, matching community calculator
 
@@ -302,28 +371,43 @@ def score_play(
     run.stats["hands_played_run"] = run.stats.get("hands_played_run", 0) + 1
     if hr.hand_type not in run.hands_discovered:
         run.hands_discovered.add(hr.hand_type)
+    if ctx.lucky_triggers:
+        run.stats["lucky_triggers"] = run.stats.get("lucky_triggers", 0) + ctx.lucky_triggers
+        for j in active_jokers(run):
+            for _ in range(ctx.lucky_triggers):
+                joker_def(j.id).effect.update_on_lucky(run, j)
+    if ctx.boss_triggered and run.round is not None:
+        run.round.boss_state["triggered"] = True
 
-    broken: list[int] = []
+    broken: list[Card] = []
     for card in hr.scoring_cards:
         if (
             card.enhancement == Enhancement.GLASS
             and not ctx.is_debuffed(card)
             and ctx.chance(1, 4)
         ):
-            broken.append(card.uid)
-    if broken:
-        run.full_deck = [c for c in run.full_deck if c.uid not in broken]
-        run.stats["glass_broken"] = run.stats.get("glass_broken", 0) + len(broken)
-
-    return ScoreResult(
+            broken.append(card)
+    result = ScoreResult(
         hand_result=hr,
         chips=ctx.chips,
         mult=ctx.mult,
         score=score,
         money_delta=ctx.money_delta,
         events=ctx.events,
-        broken_card_uids=broken,
+        broken_card_uids=[c.uid for c in broken],
     )
+    if broken:
+        from .cardops import destroy_cards
+
+        destroy_cards(run, broken)
+
+    # Post-hand state updates (originals only), then deferred self-destructs.
+    for j in active_jokers(run):
+        joker_def(j.id).effect.update_after_scoring(run, j, result)
+    from .cardops import flush_pending_destroys
+
+    flush_pending_destroys(run)
+    return result
 
 
 def _score_one_card(
@@ -345,8 +429,10 @@ def _score_one_card(
     elif enh == Enhancement.LUCKY:
         if ctx.chance(1, 5):
             ctx.add_mult(20, "enhancement", "lucky")
+            ctx.lucky_triggers += 1
         if ctx.chance(1, 15):
             ctx.add_money(20, "enhancement", "lucky")
+            ctx.lucky_triggers += 1
 
     if card.seal == Seal.GOLD:
         ctx.add_money(3, "seal", "gold")
@@ -358,5 +444,5 @@ def _score_one_card(
     elif card.edition == Edition.POLY:
         ctx.mul_mult(1.5, "edition", "poly")
 
-    for _, eff, owner in slots:
-        eff.on_card_scored(ctx, owner, card)
+    for i, eff, owner in slots:
+        _dispatch(ctx, run, i, eff.on_card_scored, ctx, owner, card)

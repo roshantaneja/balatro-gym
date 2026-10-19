@@ -30,7 +30,7 @@ class Card:
             return 50 + self.extra_chips
         return self.rank.chip_value + self.extra_chips
 
-    def clone(self) -> "Card":
+    def clone(self) -> Card:
         return replace(self)
 
     def to_dict(self) -> dict:
@@ -45,7 +45,7 @@ class Card:
         }
 
     @classmethod
-    def from_dict(cls, d: dict) -> "Card":
+    def from_dict(cls, d: dict) -> Card:
         return cls(
             uid=d["uid"],
             rank=Rank(d["rank"]),

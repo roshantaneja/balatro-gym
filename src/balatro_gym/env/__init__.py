@@ -27,9 +27,9 @@ register(
 )
 
 __all__ = [
-    "BalatroEnv",
     "BalatroBlindEnv",
+    "BalatroEnv",
     "BalatroScriptedShopEnv",
-    "ScenarioConfig",
     "RewardConfig",
+    "ScenarioConfig",
 ]

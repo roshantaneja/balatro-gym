@@ -2,6 +2,7 @@
 
 import random
 
+import tests.helpers  # noqa: F401  (loads content)
 from balatro_gym.engine import (
     BlindCleared,
     BlindKind,
@@ -12,13 +13,10 @@ from balatro_gym.engine import (
     PlayHand,
     RoundPayout,
     RunLost,
-    RunWon,
     SelectBlind,
     SkipBlind,
     new_blind_scenario,
 )
-
-import tests.helpers  # noqa: F401  (loads content)
 
 
 def test_game_starts_at_blind_select():
