@@ -238,6 +238,33 @@ most often (45 of 120), then Two Pair (33) and High Card (16); switching
 spreads planets over several hands and the switched-to build rarely gets
 the second joker it needs.
 
+## Headroom in the shop decisions (`scripts/replay_shops.py`)
+
+Every shop of a lost planner run (24 seeds, 17 losses, 349 shop
+snapshots from ante 2 on) was replayed from the engine snapshot in two
+ways: the same planner again, and one forced first action (buy each
+offered joker, reroll once, or leave at once) with the planner finishing
+the run. About 16 CPU-hours.
+
+| replay | wins |
+|---|---|
+| same planner from the snapshot (control) | 0 / 349 |
+| forced: leave the shop at once | 58 / 349 (17%) |
+| forced: reroll once | 39 / 328 (12%) |
+| forced: buy an offered joker the planner had not bought | 11 / 107 (10%) |
+
+The control never wins because the restored run and the planner are
+deterministic enough to retrace the original losing path. Any deviation
+re-rolls the rest of the run, and the win rate of those re-rolls matches
+the planner's base rate for a run already at that ante (23/191 from ante
+2 shops down to 0/36 from ante 8). Leaving at once does at least as well
+as any purchase: the shop choice itself carries no measurable signal
+against the variance of what the later shops and draws bring. 10 of the
+17 lost runs had some winning alternative, but so would 10 of 17 fresh
+runs from those points. This is the shop-side counterpart of the
+in-round result above: a different shop policy cannot recover much, and
+search over shop actions (the lookahead agent below) sees only this noise.
+
 ## LookaheadPlannerAgent: settling shop decisions by rollout
 
 `balatro_gym/env/lookahead.py` keeps the planner for everything except the
