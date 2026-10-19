@@ -90,6 +90,7 @@ class PlannerAgent(StrategistAgent):
 
     def __init__(self, seed: int = 0, samples: int = 5, top_k: int = 10,
                  commit: HandType | None = HandType.PAIR, adaptive: bool = False,
+                 joint: bool = False,
                  reserve_cap: int = 25, hunt_floor: int = 25, min_gain_per_dollar: float = 0.0,
                  early_reserve: bool = False):
         super().__init__(seed)
@@ -112,7 +113,11 @@ class PlannerAgent(StrategistAgent):
         # commitment is re-measured at every shop: the candidate hand with
         # the highest simulated power wins (10% hysteresis).
         self.commit = commit
-        self.adaptive = adaptive
+        self.adaptive = adaptive or joint
+        # `joint`: the commitment is chosen together with the shop's offer,
+        # so a joker that makes another build stronger than the current one
+        # (with it bought) switches the build to that hand.
+        self.joint = joint
         self._power_cache: dict = {}
         self.log: list | None = None  # set to [] to record shop decisions
 
@@ -220,13 +225,30 @@ class PlannerAgent(StrategistAgent):
     def choose_commit(self, run) -> HandType:
         """Re-measure which spam hand this board scores best with."""
         current = self.commit
-        proj = self.projected(run)
+        boards = [self.projected(run)]
+        if self.joint and run.shop is not None:
+            for it in run.shop.card_slots[: codec.N_BUY_CARD_SLOTS]:
+                if it.kind != "joker" or run.money + cardops.debt_allowance(run) < it.cost:
+                    continue
+                trial = run.clone()
+                if not cardops.has_joker_room(trial, it.edition):
+                    weakest = min(trial.jokers, key=lambda j: JOKER_INFO.get(j.id, (1, "add"))[0], default=None)
+                    if weakest is None:
+                        continue
+                    cardops.remove_joker(trial, weakest)
+                cardops.add_joker(trial, cardops.new_joker(trial, it.item_id, edition=it.edition))
+                boards.append(self.projected(trial))
         scores = {}
         for ht in self.COMMIT_CANDIDATES:
             self.commit = ht
-            scores[ht] = self.power(proj, salt="commit", samples=4)
+            scores[ht] = max(self.power(b, salt="commit", samples=4) for b in boards)
         best = max(scores, key=scores.get)
-        if current in scores and scores[best] < 1.05 * scores[current]:
+        # Switching forfeits the levels and jokers bought for the old build:
+        # require a clear margin, a larger one once the build has levels.
+        margin = 1.05
+        if self.joint:
+            margin = 1.25 if run.ante <= 3 else 1.6
+        if current in scores and scores[best] < margin * scores[current]:
             best = current
         self.commit = best
         return best
