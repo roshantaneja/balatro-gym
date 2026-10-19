@@ -36,3 +36,7 @@ scrape_balatro_wiki.py
 .idea/
 .vscode/
 .DS_Store
+
+# --- local datasets and lockfile -----------------------------------------------
+data/
+uv.lock

@@ -118,3 +118,30 @@ def test_lookahead_rollout_scores_and_leaves_state_untouched():
     assert env.run.to_dict() == before  # rollouts never touch the real run
     a = agent.act(env, obs, info["action_mask"])
     assert info["action_mask"][a]
+
+
+def test_joker_ordering_settles_with_brainstorm():
+    """Brainstorm copies the leftmost joker: the strategist moves its best
+    joker there and must then stop swapping (it used to flip slots 0 and 1
+    forever in the shop)."""
+    from balatro_gym.env import action_codec as codec
+    from balatro_gym.env.baselines import StrategistAgent
+
+    env = BalatroEnv(deck="d_black")
+    env.reset(seed=0)
+    run = env.run
+    run.jokers.clear()
+    for jid in ("j_even_steven", "j_hologram", "j_sly", "j_mime", "j_ramen", "j_brainstorm"):
+        cardops.add_joker(run, cardops.new_joker(run, jid))
+    env.step(codec.SELECT_BLIND)
+    agent = StrategistAgent(seed=0)
+    swaps = 0
+    while True:
+        mask = env.action_masks()
+        a = agent._swap_action(env, mask)
+        if a is None:
+            break
+        env.step(a)
+        swaps += 1
+        assert swaps < 20, "joker ordering never settles"
+    assert run.jokers[0].id == "j_hologram"

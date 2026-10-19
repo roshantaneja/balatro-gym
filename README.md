@@ -125,6 +125,35 @@ money and the losing blind are printed for diagnosis) and
 perfect-information oracle to separate play mistakes from board problems.
 `examples/train_maskable_ppo.py` prints every baseline next to a trained policy.
 
+## Validation across every deck and stake
+
+`scripts/validate_agent.py` plays every registered deck and stake for a set
+of seeds and reports completion (the run ends in WON or GAME_OVER within the
+step cap with only legal actions), wins and mean ante by deck and by stake,
+with a traceback for any run that does not finish:
+
+```bash
+python scripts/validate_agent.py --agent strategist --seeds 3 --workers 4      # 15 decks x 8 stakes x 3 seeds, ~1 min
+python scripts/validate_agent.py --agent planner --stakes white --seeds 2      # every deck, ~15 min on 4 cores
+python scripts/validate_agent.py --agent planner --decks d_red --seeds 2       # every stake
+```
+
+| agent | grid | complete | wins |
+|---|---|---|---|
+| strategist | 15 decks x 8 stakes x 3 seeds | 360 / 360 | 10 (white 5, red 4, green+ 1) |
+| planner | 15 decks, white stake, 2 seeds | 30 / 30 | 10 (Blue, Yellow, Green 2/2; Nebula, Zodiac, Anaglyph, Erratic 1/2) |
+| planner | Red Deck, 8 stakes, 2 seeds | 16 / 16 | 0 (mean ante 3.0 to 4.0 at every stake) |
+| planner | Black and Red Deck, white, 8 more seeds | 16 / 16 | Black 2/8, Red 4/8 |
+
+The sweep found one stall: with Brainstorm on the board the strategist (and
+the planner, which shares its ordering code) moved its best joker to slot 0
+and then re-sorted slot 0 by tier, swapping the same two jokers until the
+step cap in 3 of 360 runs. Fixed and covered by a test; every run above
+completes. Higher stakes are not won by any agent here: the planner's shop
+valuations were tuned at white stake, and from green stake up (faster
+blind scaling, then eternal jokers, fewer discards and the rest) it loses
+around ante 3 to 4.
+
 ## Architecture
 
 ```
@@ -157,3 +186,50 @@ env steps/sec (obs encoding included). `python benchmarks/bench_steps.py`.
 
 Stronger search-based baselines (MCTS on the cloneable engine state), a
 hand-size-adaptive action codec, Endless mode and challenge decks.
+
+## Typed decision model (branch `feature/typesafe-model`)
+
+`balatro_gym.typed` turns the game into a "piece of state, named questions,
+typed answers with confidence" interface in the style of TypeSafe AI's Jev:
+`next_action` (an enum over the legal actions, with readable labels) and
+`will_win` (a boolean), each answered with a calibrated probability.
+
+```bash
+python scripts/typed/collect.py --seeds 50 --start 0 --out data/typed/part0.npz   # planner-labelled decisions
+python scripts/typed/train.py --data "data/typed/*.npz" --out models/typed_v1.pt   # behaviour cloning + win head + temperature scaling
+python scripts/typed/eval.py --model models/typed_v1.pt --seeds 60 --workers 4     # win rate and forecast calibration
+```
+
+```python
+from balatro_gym.typed.agent import TypedModelAgent
+agent = TypedModelAgent("models/typed_v1.pt")
+answers = agent.ask(env, obs, info["action_mask"])
+answers["next_action"].label, answers["next_action"].confidence   # 'buy joker j_duo for $8', 0.71
+answers["will_win"].value, answers["will_win"].confidence         # False, 0.88
+```
+
+The in-round answer is multiple choice (`typed/candidates.py`): the model is
+offered the strongest plays (with and without junk padding, which the planner
+uses as a free discard) and the sensible discard shapes, each described by
+what a player can see (score against what the blind still needs, hand type
+and level, cards scoring, hands and discards left), and scores them. Naming
+one of 1,585 play subsets directly was the first version's weak point.
+
+Results (200 planner runs plus two DAgger rounds of 100 runs each, where
+the model drives half the steps and the planner labels every state: 500
+runs, 55,129 decisions; held-out runs for validation; play on 60 unseen
+seeds):
+
+| held-out exact match with the planner | blind select 92% · shop 57% · pack 77% · in-round option 75% (flat 3,519-way answer: 20%) |
+|---|---|
+| action confidence calibration (ECE) | 0.03 (flat answer) · 0.10 (option answer, underconfident) |
+| win forecast | Brier 0.17 at a 0.25 base rate: calibrated, weakly informative |
+| model plays every phase | 1.7% wins (1/60), mean ante 3.4 (first version: 0%, 1.0; unchanged by the second DAgger round) |
+| model answers shop/blind/pack, planner plays rounds | 1.7% wins, mean ante 4.3 after the first DAgger round (planner alone: 20%, 6.2) |
+
+The option answer fixed the in-round play (mean ante 1.0 to 3.5 playing
+alone); the shop answers are now the bottleneck: with the planner playing
+the rounds, the model's shop, blind and pack choices still lose half the
+planner's wins. Those choices depend on money, joker synergies and the
+coming boss in ways 200 runs of cloning do not capture; the planner itself
+settles them with rollouts.

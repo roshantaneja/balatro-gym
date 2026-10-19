@@ -32,6 +32,8 @@ def make_agent(name: str, samples: int, top_k: int):
         return PlannerAgent(samples=samples, top_k=top_k)
     if name == "planner-adaptive":
         return PlannerAgent(samples=samples, top_k=top_k, adaptive=True)
+    if name == "planner-joint":
+        return PlannerAgent(samples=samples, top_k=top_k, joint=True)
     if name == "lookahead":
         from balatro_gym.env.lookahead import LookaheadPlannerAgent
 
@@ -77,7 +79,7 @@ def run_seed(args: tuple) -> dict:
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--agent", default="planner",
-                   choices=["random", "heuristic", "strategist", "planner", "planner-adaptive", "lookahead"])
+                   choices=["random", "heuristic", "strategist", "planner", "planner-adaptive", "planner-joint", "lookahead"])
     p.add_argument("--seeds", type=int, default=60, help="number of seeds (0..N-1)")
     p.add_argument("--start", type=int, default=0, help="first seed")
     p.add_argument("--deck", default="d_red")

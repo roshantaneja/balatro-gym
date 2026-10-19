@@ -407,15 +407,17 @@ class StrategistAgent(HeuristicAgent):
         run = env.run
         n = min(len(run.jokers), codec.N_SELL_SLOTS)
         keys = [self._order_key(run, i) for i in range(n)]
-        # Brainstorm wants the best (highest-tier) joker leftmost.
+        start = 0
+        # Brainstorm copies the leftmost joker: move the best (highest-tier)
+        # one there, then keep the rest in tier order without touching slot 0
+        # (sorting slot 0 as well would swap the best joker back out forever).
         if any(j.id == "j_brainstorm" for j in run.jokers[:n]) and n > 1:
             best = max(range(n), key=lambda i: (JOKER_INFO.get(run.jokers[i].id, (1, "add"))[0]
                                                  if run.jokers[i].id != "j_brainstorm" else -1))
-            for i in range(best - 1, -1, -1):
-                idx = codec.SWAP_JOKER_BASE + i
-                if run.jokers[i].id != "j_brainstorm" and mask[idx]:
-                    return idx
-        for i in range(n - 1):
+            if best > 0 and mask[codec.SWAP_JOKER_BASE + best - 1]:
+                return codec.SWAP_JOKER_BASE + best - 1
+            start = 1
+        for i in range(start, n - 1):
             if keys[i] > keys[i + 1] and mask[codec.SWAP_JOKER_BASE + i]:
                 return codec.SWAP_JOKER_BASE + i
         return None
