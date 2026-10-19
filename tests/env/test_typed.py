@@ -13,7 +13,7 @@ from balatro_gym.typed import NEXT_ACTION, WILL_WIN, describe_action, questions_
 
 def test_questions_and_labels_cover_every_legal_action():
     env = BalatroEnv()
-    _obs, info = env.reset(seed=11)
+    _obs, _info = env.reset(seed=11)
     assert questions_for(env) == [NEXT_ACTION, WILL_WIN]
     env.step(codec.SELECT_BLIND)
     assert env.run.phase == Phase.PLAYING

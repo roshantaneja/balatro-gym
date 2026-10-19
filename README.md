@@ -157,3 +157,24 @@ env steps/sec (obs encoding included). `python benchmarks/bench_steps.py`.
 
 Stronger search-based baselines (MCTS on the cloneable engine state), a
 hand-size-adaptive action codec, Endless mode and challenge decks.
+
+## Typed decision model (branch `feature/typesafe-model`)
+
+`balatro_gym.typed` turns the game into a "piece of state, named questions,
+typed answers with confidence" interface in the style of TypeSafe AI's Jev:
+`next_action` (an enum over the legal actions, with readable labels) and
+`will_win` (a boolean), each answered with a calibrated probability.
+
+```bash
+python scripts/typed/collect.py --seeds 50 --start 0 --out data/typed/part0.npz   # planner-labelled decisions
+python scripts/typed/train.py --data "data/typed/*.npz" --out models/typed_v1.pt   # behaviour cloning + win head + temperature scaling
+python scripts/typed/eval.py --model models/typed_v1.pt --seeds 60 --workers 4     # win rate and forecast calibration
+```
+
+```python
+from balatro_gym.typed.agent import TypedModelAgent
+agent = TypedModelAgent("models/typed_v1.pt")
+answers = agent.ask(env, obs, info["action_mask"])
+answers["next_action"].label, answers["next_action"].confidence   # 'buy joker j_duo for $8', 0.71
+answers["will_win"].value, answers["will_win"].confidence         # False, 0.88
+```

@@ -58,7 +58,8 @@ def main() -> None:
         results = [run_seed(j) for j in jobs]
     results.sort(key=lambda r: r["seed"])
     for r in results:
-        print(f"seed {r['seed']}: {'WON' if r['won'] else 'ante %d' % r['ante']} "
+        outcome = "WON" if r["won"] else f"ante {r['ante']}"
+        print(f"seed {r['seed']}: {outcome} "
               f"P(win)@ante {[round(r['forecasts'].get(a, float('nan')), 2) for a in range(1, 9) if a in r['forecasts']]}")
     wins = sum(r["won"] for r in results)
     # Forecast calibration: stated P(win) at each ante start vs the outcome.
