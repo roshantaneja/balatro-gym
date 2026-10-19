@@ -15,7 +15,10 @@ class TypedModelAgent:
     baseline-style interface used by `balatro_gym.env.eval.evaluate`.
     """
 
-    def __init__(self, path: str, sample: bool = False, seed: int = 0):
+    def __init__(self, path: str, sample: bool = False, seed: int = 0, play_with: str | None = None):
+        """`play_with`: None (the model plays every phase), "strategist" or
+        "planner" to hand the in-round play/discard decisions to that agent
+        while the model answers blind-select, shop and pack questions."""
         import torch
 
         from balatro_gym.content import load_all
@@ -32,6 +35,15 @@ class TypedModelAgent:
         self.sample = sample
         self.rng = np.random.default_rng(seed)
         self.metrics = ckpt.get("metrics", {})
+        self._player = None
+        if play_with == "strategist":
+            from balatro_gym.env.baselines import StrategistAgent
+
+            self._player = StrategistAgent(seed=seed)
+        elif play_with == "planner":
+            from balatro_gym.env.planner import PlannerAgent
+
+            self._player = PlannerAgent(seed=seed)
 
     def _probs(self, obs, mask: np.ndarray):
         import torch
@@ -41,18 +53,36 @@ class TypedModelAgent:
         with torch.no_grad():
             logits, win_logit = self.net(obs_to_tensors(obs))
             lp = self.net.masked_log_probs(logits, torch.as_tensor(mask)[None])
-            return lp.exp()[0].numpy(), float(torch.sigmoid(win_logit)[0])
+            return lp.exp()[0].numpy(), float(self.net.win_probability(win_logit)[0])
+
+    def _structured(self, env, obs, mask: np.ndarray) -> tuple[int | None, float]:
+        if env._env_phase() != "playing":
+            return None, 0.0
+        import torch
+
+        from .model import obs_to_tensors
+
+        with torch.no_grad():
+            return self.net.decode_play(obs_to_tensors(obs), mask)
 
     def ask(self, env, obs, mask: np.ndarray) -> dict[str, Answer]:
         probs, p_win = self._probs(obs, mask)
-        idx = int(np.argmax(probs))
+        idx, conf = self._structured(env, obs, mask)
+        if idx is None:
+            idx = int(np.argmax(probs))
+            conf = float(probs[idx])
         return {
-            NEXT_ACTION.name: Answer(NEXT_ACTION.name, idx, float(probs[idx]), describe_action(env, idx)),
+            NEXT_ACTION.name: Answer(NEXT_ACTION.name, idx, conf, describe_action(env, idx)),
             WILL_WIN.name: Answer(WILL_WIN.name, p_win >= 0.5, p_win if p_win >= 0.5 else 1 - p_win,
                                   f"P(win) = {p_win:.2f}"),
         }
 
     def act(self, env, obs, mask: np.ndarray) -> int:
+        if self._player is not None and env._env_phase() == "playing":
+            return self._player._play_phase(env, mask)
+        idx, _conf = self._structured(env, obs, mask)
+        if idx is not None and not self.sample:
+            return idx
         probs, _ = self._probs(obs, mask)
         if self.sample:
             probs = probs * mask

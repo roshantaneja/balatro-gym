@@ -178,3 +178,20 @@ answers = agent.ask(env, obs, info["action_mask"])
 answers["next_action"].label, answers["next_action"].confidence   # 'buy joker j_duo for $8', 0.71
 answers["will_win"].value, answers["will_win"].confidence         # False, 0.88
 ```
+
+First results (200 planner runs, 28,823 decisions, held-out runs for validation;
+play on 60 unseen seeds):
+
+| held-out exact match with the planner | blind select 90% · shop 54% · pack 77% · in-round play 15% (structured 12-slot decode 10%) |
+|---|---|
+| action confidence calibration (ECE) | 0.03 |
+| win forecast | Brier 0.22 at a 0.34 base rate: calibrated but uninformative from raw features |
+| model plays every phase | 0% wins, mean ante 1.0 |
+| model answers shop/blind/pack, strategist plays rounds | 0% wins, mean ante 3.8 (strategist alone: 5%, 4.5) |
+| model answers shop/blind/pack, planner plays rounds | 2% wins, mean ante 4.1 (planner alone: 20%, 6.2) |
+
+Behaviour cloning from 200 runs reproduces the planner's shop and pack
+choices about half the time and its in-round plays rarely; errors compound
+over a run. Next: more runs, DAgger-style relabelling of the states the
+model itself reaches, and a structured in-round answer that scores the
+candidate plays rather than naming slots.

@@ -26,6 +26,7 @@ from balatro_gym.typed.model import (
     ID_KEYS,
     TypedDecisionNet,
     expected_calibration_error,
+    fit_platt,
     fit_temperature,
 )
 
@@ -37,6 +38,20 @@ def load(pattern: str) -> dict[str, np.ndarray]:
     if not parts:
         raise SystemExit(f"no data matches {pattern}")
     return {k: np.concatenate([p[k] for p in parts]) for k in parts[0]}
+
+
+def structured_labels(actions: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """(kind: 0 play / 1 discard / -1 other, slot multi-hot, size-1) per decision."""
+    kind = np.full(len(actions), -1, dtype=np.int64)
+    slots = np.zeros((len(actions), 12), dtype=np.float32)
+    size = np.zeros(len(actions), dtype=np.int64)
+    for i, a in enumerate(actions):
+        k, payload = codec.decode_kind(int(a))
+        if k in ("play", "discard"):
+            kind[i] = 0 if k == "play" else 1
+            slots[i, list(payload)] = 1.0
+            size[i] = len(payload) - 1
+    return kind, slots, size
 
 
 def batches(data: dict, idx: np.ndarray, size: int, obs_keys: list[str], shuffle: bool, rng):
@@ -52,6 +67,9 @@ def batches(data: dict, idx: np.ndarray, size: int, obs_keys: list[str], shuffle
             torch.as_tensor(data["mask"][sel]),
             torch.as_tensor(data["action"][sel], dtype=torch.long),
             torch.as_tensor(data["won"][sel], dtype=torch.float32),
+            torch.as_tensor(data["kind"][sel], dtype=torch.long),
+            torch.as_tensor(data["slots"][sel], dtype=torch.float32),
+            torch.as_tensor(data["size"][sel], dtype=torch.long),
         )
 
 
@@ -71,6 +89,7 @@ def main() -> None:
     torch.manual_seed(args.seed)
     rng = np.random.default_rng(args.seed)
     data = load(args.data)
+    data["kind"], data["slots"], data["size"] = structured_labels(data["action"])
     load_all()  # the encoder's ID vocabularies are the content registries
     space = ObsEncoder().space()
     obs_keys = sorted(space.spaces)
@@ -89,13 +108,21 @@ def main() -> None:
     net = TypedDecisionNet(space, codec.N_ACTIONS, args.hidden, args.emb)
     opt = torch.optim.Adam(net.parameters(), lr=args.lr)
     bce = nn.BCEWithLogitsLoss()
+    ce = nn.CrossEntropyLoss()
     for epoch in range(args.epochs):
         net.train()
         t, tot, n = time.time(), 0.0, 0
-        for obs, mask, action, won in batches(data, train_idx, args.batch, obs_keys, True, rng):
-            logits, win_logit = net(obs)
+        for obs, mask, action, won, kind, slots, size in batches(data, train_idx, args.batch, obs_keys, True, rng):
+            h = net.body(net.features(obs))
+            logits, win_logit = net.action_head(h), net.win_head(h).squeeze(-1)
             lp = net.masked_log_probs(logits, mask, calibrated=False)
             loss = -lp.gather(1, action[:, None]).mean() + 0.5 * bce(win_logit, won)
+            played = kind >= 0
+            if played.any():
+                hp = h[played]
+                loss = loss + ce(net.kind_head(hp), kind[played])
+                loss = loss + bce(net.slot_head(hp), slots[played]) * 4.0
+                loss = loss + ce(net.size_head(hp), size[played])
             opt.zero_grad()
             loss.backward()
             opt.step()
@@ -106,17 +133,23 @@ def main() -> None:
 
     # Calibration on held-out runs.
     net.eval()
-    logits_all, mask_all, act_all = [], [], []
+    logits_all, mask_all, act_all, win_all, won_all = [], [], [], [], []
     with torch.no_grad():
-        for obs, mask, action, _won in batches(data, val_idx, args.batch, obs_keys, False, rng):
-            logits, _ = net(obs)
+        for obs, mask, action, won, *_ in batches(data, val_idx, args.batch, obs_keys, False, rng):
+            logits, win_logit = net(obs)
             logits_all.append(logits)
             mask_all.append(mask)
             act_all.append(action)
+            win_all.append(win_logit)
+            won_all.append(won)
     temp = fit_temperature(torch.cat(logits_all), torch.cat(mask_all), torch.cat(act_all))
     net.log_temperature.data = torch.tensor([np.log(temp)], dtype=torch.float32)
+    a, b = fit_platt(torch.cat(win_all), torch.cat(won_all))
+    net.win_scale.data = torch.tensor([a], dtype=torch.float32)
+    net.win_shift.data = torch.tensor([b], dtype=torch.float32)
     metrics = evaluate(net, data, val_idx, args.batch, obs_keys)
     metrics["temperature"] = temp
+    metrics["win_platt"] = [a, b]
     print(json.dumps(metrics, indent=1))
 
     import os
@@ -135,16 +168,21 @@ def main() -> None:
 
 def evaluate(net: TypedDecisionNet, data: dict, idx: np.ndarray, batch: int, obs_keys: list[str]) -> dict:
     net.eval()
-    conf, correct, phases, p_win, won = [], [], [], [], []
+    conf, correct, phases, p_win, won, play_hits, play_n = [], [], [], [], [], 0, 0
     with torch.no_grad():
-        for obs, mask, action, w in batches(data, idx, batch, obs_keys, False, np.random.default_rng(0)):
+        for obs, mask, action, w, kind, slots, size in batches(data, idx, batch, obs_keys, False, np.random.default_rng(0)):
             logits, win_logit = net(obs)
             probs = net.masked_log_probs(logits, mask).exp()
             top = probs.argmax(dim=1)
             conf.append(probs.max(dim=1).values.numpy())
             correct.append((top == action).numpy())
-            p_win.append(torch.sigmoid(win_logit).numpy())
+            p_win.append(net.win_probability(win_logit).numpy())
             won.append(w.numpy())
+            for i in np.flatnonzero((kind >= 0).numpy()):  # structured decode per decision
+                single = {k: v[i : i + 1] for k, v in obs.items()}
+                a, _c = net.decode_play(single, mask[i].numpy())
+                play_hits += int(a == int(action[i]))
+                play_n += 1
     conf, correct = np.concatenate(conf), np.concatenate(correct).astype(float)
     p_win, won = np.concatenate(p_win), np.concatenate(won)
     phases = data["phase"][idx]
@@ -156,6 +194,7 @@ def evaluate(net: TypedDecisionNet, data: dict, idx: np.ndarray, batch: int, obs
                                               ((p_win >= 0.5) == won.astype(bool)).astype(float)),
         "win_brier": float(np.mean((p_win - won) ** 2)),
         "win_base_rate": float(won.mean()),
+        "structured_play_accuracy": float(play_hits / max(play_n, 1)),
     }
     for code, name in PHASE_NAMES.items():
         sel = phases == code

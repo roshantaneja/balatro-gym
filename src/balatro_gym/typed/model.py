@@ -17,6 +17,8 @@ import torch
 from gymnasium import spaces
 from torch import nn
 
+HAND_SLOTS = 12
+
 ID_KEYS = (
     "joker_ids", "consumable_ids", "shop_item_ids", "shop_voucher_ids", "pack_item_ids",
     "boss_id", "ante_boss_id", "blind_tag_ids", "deck_id",
@@ -57,7 +59,15 @@ class TypedDecisionNet(nn.Module):
         )
         self.action_head = nn.Linear(hidden, n_actions)
         self.win_head = nn.Linear(hidden, 1)
+        # Structured play answer: play-or-discard, which hand slots, how many.
+        # A 12-way multi-select is far easier to learn than a 1,585-way softmax.
+        self.kind_head = nn.Linear(hidden, 2)
+        self.slot_head = nn.Linear(hidden, HAND_SLOTS)
+        self.size_head = nn.Linear(hidden, 5)
         self.log_temperature = nn.Parameter(torch.zeros(1), requires_grad=False)
+        # Platt scaling for the win head: sigmoid(a * logit + b), fitted on held-out runs.
+        self.win_scale = nn.Parameter(torch.ones(1), requires_grad=False)
+        self.win_shift = nn.Parameter(torch.zeros(1), requires_grad=False)
         self.n_actions = n_actions
         self.hidden = hidden
         self.emb = emb
@@ -77,6 +87,39 @@ class TypedDecisionNet(nn.Module):
     def forward(self, obs: dict[str, torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor]:
         h = self.body(self.features(obs))
         return self.action_head(h), self.win_head(h).squeeze(-1)
+
+    def play_heads(self, obs: dict[str, torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        h = self.body(self.features(obs))
+        return self.kind_head(h), self.slot_head(h), self.size_head(h)
+
+    def decode_play(self, obs: dict[str, torch.Tensor], mask: np.ndarray) -> tuple[int | None, float]:
+        """Compose a legal play/discard action from the structured heads.
+        Returns (action index, confidence) or (None, 0) when no legal
+        composition exists (boss restrictions, no discards left)."""
+        from balatro_gym.env import action_codec as codec
+
+        kind_logit, slot_logit, size_logit = self.play_heads(obs)
+        kind_p = torch.softmax(kind_logit[0], dim=-1)
+        slot_p = torch.sigmoid(slot_logit[0])
+        size_p = torch.softmax(size_logit[0], dim=-1)
+        order = torch.argsort(slot_p, descending=True).tolist()
+        bases = [codec.PLAY_BASE, codec.DISCARD_BASE]
+        for kind in torch.argsort(kind_p, descending=True).tolist():
+            for size in torch.argsort(size_p, descending=True).tolist():
+                subset = tuple(sorted(order[: size + 1]))
+                idx = codec._SUBSET5_INDEX.get(subset)
+                if idx is None:
+                    continue
+                action = bases[kind] + idx
+                if mask[action]:
+                    conf = float(kind_p[kind] * size_p[size] * slot_p[list(subset)].mean())
+                    return action, conf
+        return None, 0.0
+
+    def win_probability(self, win_logit: torch.Tensor, calibrated: bool = True) -> torch.Tensor:
+        if calibrated:
+            win_logit = self.win_scale * win_logit + self.win_shift
+        return torch.sigmoid(win_logit)
 
     def masked_log_probs(self, logits: torch.Tensor, mask: torch.Tensor, calibrated: bool = True) -> torch.Tensor:
         if calibrated:
@@ -105,3 +148,20 @@ def fit_temperature(logits: torch.Tensor, mask: torch.Tensor, targets: torch.Ten
         if nll < best_nll:
             best_t, best_nll = float(t), nll
     return best_t
+
+
+def fit_platt(logits: torch.Tensor, targets: torch.Tensor, steps: int = 500) -> tuple[float, float]:
+    """Scale and shift for a binary logit that minimise the held-out BCE."""
+    a = torch.ones(1, requires_grad=True)
+    b = torch.zeros(1, requires_grad=True)
+    opt = torch.optim.LBFGS([a, b], lr=0.1, max_iter=steps)
+    bce = nn.BCEWithLogitsLoss()
+
+    def closure():
+        opt.zero_grad()
+        loss = bce(a * logits + b, targets)
+        loss.backward()
+        return loss
+
+    opt.step(closure)
+    return float(a.item()), float(b.item())

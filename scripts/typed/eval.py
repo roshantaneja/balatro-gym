@@ -18,12 +18,12 @@ import numpy as np
 
 
 def run_seed(args: tuple) -> dict:
-    model, seed, deck, stake, sample = args
+    model, seed, deck, stake, sample, play_with = args
     from balatro_gym.engine import Phase
     from balatro_gym.env.envs import BalatroEnv
     from balatro_gym.typed.agent import TypedModelAgent
 
-    agent = TypedModelAgent(model, sample=sample, seed=seed)
+    agent = TypedModelAgent(model, sample=sample, seed=seed, play_with=play_with)
     env = BalatroEnv(deck=deck, stake=stake)
     obs, info = env.reset(seed=seed)
     forecasts: dict[int, float] = {}
@@ -49,8 +49,11 @@ def main() -> None:
     p.add_argument("--stake", default="white")
     p.add_argument("--workers", type=int, default=1)
     p.add_argument("--sample", action="store_true", help="sample actions instead of argmax")
+    p.add_argument("--play-with", default=None, choices=[None, "strategist", "planner"],
+                   help="hand in-round play to this agent; the model keeps the shop, blind and pack decisions")
     args = p.parse_args()
-    jobs = [(args.model, s, args.deck, args.stake, args.sample) for s in range(args.start, args.start + args.seeds)]
+    jobs = [(args.model, s, args.deck, args.stake, args.sample, args.play_with)
+            for s in range(args.start, args.start + args.seeds)]
     if args.workers > 1:
         with Pool(args.workers) as pool:
             results = list(pool.imap_unordered(run_seed, jobs))
