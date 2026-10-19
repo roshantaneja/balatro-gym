@@ -30,7 +30,8 @@ class TypedModelAgent:
         ckpt = torch.load(path, map_location="cpu", weights_only=False)
         cfg = ckpt["config"]
         self.net = TypedDecisionNet(ObsEncoder().space(), cfg["n_actions"], cfg["hidden"], cfg["emb"])
-        self.net.load_state_dict(ckpt["state_dict"])
+        self.net.load_state_dict(ckpt["state_dict"], strict=False)
+        self.options = bool(ckpt.get("metrics", {}).get("option_n", 0))
         self.net.eval()
         self.sample = sample
         self.rng = np.random.default_rng(seed)
@@ -56,13 +57,20 @@ class TypedModelAgent:
             return lp.exp()[0].numpy(), float(self.net.win_probability(win_logit)[0])
 
     def _structured(self, env, obs, mask: np.ndarray) -> tuple[int | None, float]:
+        """The in-round answer: the best of the named candidate options when
+        the checkpoint learned to score them, else the composed play."""
         if env._env_phase() != "playing":
             return None, 0.0
         import torch
 
+        from .candidates import round_options
         from .model import obs_to_tensors
 
         with torch.no_grad():
+            if self.options:
+                actions, feats = round_options(env, mask)
+                if actions:
+                    return self.net.decode_options(obs_to_tensors(obs), actions, feats)
             return self.net.decode_play(obs_to_tensors(obs), mask)
 
     def ask(self, env, obs, mask: np.ndarray) -> dict[str, Answer]:

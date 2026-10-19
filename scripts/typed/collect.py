@@ -18,6 +18,7 @@ import numpy as np
 from balatro_gym.engine import HandType, Phase
 from balatro_gym.env.envs import BalatroEnv
 from balatro_gym.env.planner import PlannerAgent
+from balatro_gym.typed.candidates import MAX_OPTIONS, OPTION_FEATS, padded_options
 
 PHASES = {"blind_select": 0, "playing": 1, "shop": 2, "pack_open": 3, "target": 4}
 
@@ -39,6 +40,7 @@ def collect(seed: int, deck: str, stake: str, driver: str | None = None, beta: f
     obs, info = env.reset(seed=seed)
     records: dict[str, list] = {k: [] for k in obs}
     masks, actions, phases, antes, blinds = [], [], [], [], []
+    opt_actions, opt_feats, opt_labels = [], [], []
     done, steps = False, 0
     while not done and steps < 4000:
         mask = info["action_mask"]
@@ -52,7 +54,15 @@ def collect(seed: int, deck: str, stake: str, driver: str | None = None, beta: f
             records[k].append(np.asarray(v))
         masks.append(mask.copy())
         actions.append(a)
-        phases.append(PHASES.get(env._env_phase(), 5))
+        phase = env._env_phase()
+        phases.append(PHASES.get(phase, 5))
+        if phase == "playing":  # the multiple-choice in-round answer
+            oa, of, ol = padded_options(env, mask, a)
+        else:
+            oa, of, ol = np.full(MAX_OPTIONS, -1, dtype=np.int64), np.zeros((MAX_OPTIONS, OPTION_FEATS), np.float32), -1
+        opt_actions.append(oa)
+        opt_feats.append(of)
+        opt_labels.append(ol)
         antes.append(env.run.ante)
         blinds.append(env.run.blind_index)
         obs, _r, term, _trunc, info = env.step(taken)
@@ -66,6 +76,9 @@ def collect(seed: int, deck: str, stake: str, driver: str | None = None, beta: f
         phase=np.asarray(phases, dtype=np.int64),
         ante=np.asarray(antes, dtype=np.int64),
         blind=np.asarray(blinds, dtype=np.int64),
+        opt_actions=np.stack(opt_actions),
+        opt_feats=np.stack(opt_feats),
+        opt_label=np.asarray(opt_labels, dtype=np.int64),
         won=np.full(n, won, dtype=bool),
         seed=np.full(n, seed, dtype=np.int64),
         final_ante=np.full(n, env.run.ante, dtype=np.int64),

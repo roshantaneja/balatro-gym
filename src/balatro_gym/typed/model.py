@@ -17,7 +17,10 @@ import torch
 from gymnasium import spaces
 from torch import nn
 
+from .candidates import OPTION_FEATS
+
 HAND_SLOTS = 12
+OPTION_HIDDEN = 64
 
 ID_KEYS = (
     "joker_ids", "consumable_ids", "shop_item_ids", "shop_voucher_ids", "pack_item_ids",
@@ -64,6 +67,13 @@ class TypedDecisionNet(nn.Module):
         self.kind_head = nn.Linear(hidden, 2)
         self.slot_head = nn.Linear(hidden, HAND_SLOTS)
         self.size_head = nn.Linear(hidden, 5)
+        # Multiple-choice in-round answer: score each named candidate action
+        # (see `candidates.py`) from the state features and the option's own
+        # features; the answer is a softmax over the offered options.
+        self.option_proj = nn.Linear(hidden, OPTION_HIDDEN)
+        self.option_mlp = nn.Sequential(
+            nn.Linear(OPTION_HIDDEN + OPTION_FEATS, OPTION_HIDDEN), nn.ReLU(), nn.Linear(OPTION_HIDDEN, 1)
+        )
         self.log_temperature = nn.Parameter(torch.zeros(1), requires_grad=False)
         # Platt scaling for the win head: sigmoid(a * logit + b), fitted on held-out runs.
         self.win_scale = nn.Parameter(torch.ones(1), requires_grad=False)
@@ -91,6 +101,22 @@ class TypedDecisionNet(nn.Module):
     def play_heads(self, obs: dict[str, torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         h = self.body(self.features(obs))
         return self.kind_head(h), self.slot_head(h), self.size_head(h)
+
+    def option_scores(self, h: torch.Tensor, feats: torch.Tensor, acts: torch.Tensor) -> torch.Tensor:
+        """Logits over the offered options: h [B, hidden], feats [B, M, F],
+        acts [B, M] (-1 marks an empty slot, which gets no mass)."""
+        ctx = self.option_proj(h)[:, None, :].expand(-1, feats.shape[1], -1)
+        logits = self.option_mlp(torch.cat([ctx, feats], dim=-1)).squeeze(-1)
+        return logits.masked_fill(acts < 0, -1e9)
+
+    def decode_options(self, obs: dict[str, torch.Tensor], actions: list[int], feats: np.ndarray) -> tuple[int, float]:
+        """Best of the offered options and its (softmax) confidence."""
+        h = self.body(self.features(obs))
+        f = torch.as_tensor(feats, dtype=torch.float32)[None]
+        a = torch.as_tensor(actions, dtype=torch.long)[None]
+        probs = torch.softmax(self.option_scores(h, f, a)[0], dim=-1)
+        best = int(probs.argmax())
+        return actions[best], float(probs[best])
 
     def decode_play(self, obs: dict[str, torch.Tensor], mask: np.ndarray) -> tuple[int | None, float]:
         """Compose a legal play/discard action from the structured heads.

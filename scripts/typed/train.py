@@ -22,6 +22,7 @@ from torch import nn
 from balatro_gym.content import load_all
 from balatro_gym.env import action_codec as codec
 from balatro_gym.env.obs.encoder import ObsEncoder
+from balatro_gym.typed.candidates import MAX_OPTIONS, OPTION_FEATS
 from balatro_gym.typed.model import (
     ID_KEYS,
     TypedDecisionNet,
@@ -37,7 +38,14 @@ def load(pattern: str) -> dict[str, np.ndarray]:
     parts = [dict(np.load(f)) for f in sorted(glob.glob(pattern))]
     if not parts:
         raise SystemExit(f"no data matches {pattern}")
-    return {k: np.concatenate([p[k] for p in parts]) for k in parts[0]}
+    n = sum(len(p["action"]) for p in parts)
+    for p in parts:  # data collected before the multiple-choice answer existed
+        p.setdefault("opt_actions", np.full((len(p["action"]), MAX_OPTIONS), -1, dtype=np.int64))
+        p.setdefault("opt_feats", np.zeros((len(p["action"]), MAX_OPTIONS, OPTION_FEATS), dtype=np.float32))
+        p.setdefault("opt_label", np.full(len(p["action"]), -1, dtype=np.int64))
+    out = {k: np.concatenate([p[k] for p in parts]) for k in parts[0]}
+    assert len(out["action"]) == n
+    return out
 
 
 def structured_labels(actions: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -70,6 +78,9 @@ def batches(data: dict, idx: np.ndarray, size: int, obs_keys: list[str], shuffle
             torch.as_tensor(data["kind"][sel], dtype=torch.long),
             torch.as_tensor(data["slots"][sel], dtype=torch.float32),
             torch.as_tensor(data["size"][sel], dtype=torch.long),
+            torch.as_tensor(data["opt_actions"][sel], dtype=torch.long),
+            torch.as_tensor(data["opt_feats"][sel], dtype=torch.float32),
+            torch.as_tensor(data["opt_label"][sel], dtype=torch.long),
         )
 
 
@@ -112,7 +123,9 @@ def main() -> None:
     for epoch in range(args.epochs):
         net.train()
         t, tot, n = time.time(), 0.0, 0
-        for obs, mask, action, won, kind, slots, size in batches(data, train_idx, args.batch, obs_keys, True, rng):
+        for obs, mask, action, won, kind, slots, size, oa, of, ol in batches(
+            data, train_idx, args.batch, obs_keys, True, rng
+        ):
             h = net.body(net.features(obs))
             logits, win_logit = net.action_head(h), net.win_head(h).squeeze(-1)
             lp = net.masked_log_probs(logits, mask, calibrated=False)
@@ -123,6 +136,9 @@ def main() -> None:
                 loss = loss + ce(net.kind_head(hp), kind[played])
                 loss = loss + bce(net.slot_head(hp), slots[played]) * 4.0
                 loss = loss + ce(net.size_head(hp), size[played])
+            offered = ol >= 0
+            if offered.any():
+                loss = loss + 2.0 * ce(net.option_scores(h[offered], of[offered], oa[offered]), ol[offered])
             opt.zero_grad()
             loss.backward()
             opt.step()
@@ -169,9 +185,21 @@ def main() -> None:
 def evaluate(net: TypedDecisionNet, data: dict, idx: np.ndarray, batch: int, obs_keys: list[str]) -> dict:
     net.eval()
     conf, correct, phases, p_win, won, play_hits, play_n = [], [], [], [], [], 0, 0
+    opt_hits, opt_n, opt_conf, opt_correct = 0, 0, [], []
     with torch.no_grad():
-        for obs, mask, action, w, kind, slots, size in batches(data, idx, batch, obs_keys, False, np.random.default_rng(0)):
-            logits, win_logit = net(obs)
+        for obs, mask, action, w, kind, slots, size, oa, of, ol in batches(
+            data, idx, batch, obs_keys, False, np.random.default_rng(0)
+        ):
+            h = net.body(net.features(obs))
+            logits, win_logit = net.action_head(h), net.win_head(h).squeeze(-1)
+            offered = ol >= 0
+            if offered.any():
+                op = torch.softmax(net.option_scores(h[offered], of[offered], oa[offered]), dim=-1)
+                hit = op.argmax(dim=1) == ol[offered]
+                opt_hits += int(hit.sum())
+                opt_n += int(offered.sum())
+                opt_conf.append(op.max(dim=1).values.numpy())
+                opt_correct.append(hit.numpy().astype(float))
             probs = net.masked_log_probs(logits, mask).exp()
             top = probs.argmax(dim=1)
             conf.append(probs.max(dim=1).values.numpy())
@@ -195,7 +223,12 @@ def evaluate(net: TypedDecisionNet, data: dict, idx: np.ndarray, batch: int, obs
         "win_brier": float(np.mean((p_win - won) ** 2)),
         "win_base_rate": float(won.mean()),
         "structured_play_accuracy": float(play_hits / max(play_n, 1)),
+        "option_accuracy": float(opt_hits / max(opt_n, 1)),
+        "option_n": int(opt_n),
     }
+    if opt_n:
+        out["option_ece"] = expected_calibration_error(np.concatenate(opt_conf), np.concatenate(opt_correct))
+        out["option_mean_confidence"] = float(np.concatenate(opt_conf).mean())
     for code, name in PHASE_NAMES.items():
         sel = phases == code
         if sel.any():

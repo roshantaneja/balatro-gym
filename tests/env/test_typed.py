@@ -47,3 +47,31 @@ def test_typed_net_forward_and_calibration():
     t = fit_temperature(logits.detach(), mask, targets)
     assert 0.2 <= t <= 8.0
     assert expected_calibration_error(np.array([0.9, 0.6]), np.array([1.0, 0.0])) > 0
+
+
+def test_round_options_are_legal_and_scoreable():
+    torch = pytest.importorskip("torch")
+    from balatro_gym.env.obs.encoder import ObsEncoder
+    from balatro_gym.typed.candidates import (
+        MAX_OPTIONS,
+        OPTION_FEATS,
+        padded_options,
+        round_options,
+    )
+    from balatro_gym.typed.model import TypedDecisionNet, obs_to_tensors
+
+    env = BalatroEnv()
+    obs, _info = env.reset(seed=7)
+    obs, _r, _t, _tr, info = env.step(codec.SELECT_BLIND)
+    mask = info["action_mask"]
+    actions, feats = round_options(env, mask)
+    assert actions and len(actions) == len(set(actions)) <= MAX_OPTIONS
+    assert all(mask[a] for a in actions)
+    assert feats.shape == (len(actions), OPTION_FEATS)
+    assert any(codec.decode_kind(a)[0] == "discard" for a in actions)
+    acts, fm, label_idx = padded_options(env, mask, actions[2])
+    assert acts.shape == (MAX_OPTIONS,) and fm.shape == (MAX_OPTIONS, OPTION_FEATS) and label_idx == 2
+    net = TypedDecisionNet(ObsEncoder().space(), codec.N_ACTIONS, hidden=32, emb=4)
+    with torch.no_grad():
+        chosen, conf = net.decode_options(obs_to_tensors(obs), actions, feats)
+    assert chosen in actions and 0.0 < conf <= 1.0
