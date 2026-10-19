@@ -259,6 +259,26 @@ such variance, decides better. Search over shops would need rollouts
 that are both cheap and low-variance, which this engine's per-round cost
 does not allow at useful sample sizes.
 
+## Learning from scratch on this hardware
+
+`examples/train_maskable_ppo.py` (MaskablePPO, MultiInputPolicy, 1024-step
+rollouts, batch 256, entropy 0.01) was run for 2,000,000 steps on 4 CPU
+cores (about 5 hours each, no GPU):
+
+| env | policy reward (50 episodes) | same-env baselines (20 seeds) |
+|---|---|---|
+| `Balatro-v0` (whole game) | 1.44 +/- 2.73 (about 1.4 blinds per run) | heuristic mean ante 3.75; strategist 10% / 4.3; planner 30% / 6.15 |
+| `BalatroScriptedShop-v0` (policy plays hands, strategist runs the shop) | 4.48 +/- 4.05 (about 4.5 blinds per run) | heuristic 10% / 5.25; strategist 10% / 4.3 |
+
+From scratch, two million steps are enough to learn to clear the first
+blind or two of a run and no more; the whole-game policy is below the
+greedy heuristic. Reaching the planner, let alone a consistent winner,
+needs orders of magnitude more environment steps (the reward is one
+blind at a time over runs of 150-500 steps with a 3,519-way action
+space), a GPU, vectorised environments, and either reward shaping that
+the env already offers (`reward_mode="shaped"`) or imitation of planner
+trajectories to start from.
+
 The next step that the diagnostics justify is not more hand tuning but
 learning: use the planner to generate expert-labelled shop decisions and
 train the shop/skip policy, or run a proper search (one-ante lookahead over
