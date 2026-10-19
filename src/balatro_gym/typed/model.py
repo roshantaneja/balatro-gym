@@ -75,6 +75,7 @@ class TypedDecisionNet(nn.Module):
             nn.Linear(OPTION_HIDDEN + OPTION_FEATS, OPTION_HIDDEN), nn.ReLU(), nn.Linear(OPTION_HIDDEN, 1)
         )
         self.log_temperature = nn.Parameter(torch.zeros(1), requires_grad=False)
+        self.option_log_temperature = nn.Parameter(torch.zeros(1), requires_grad=False)
         # Platt scaling for the win head: sigmoid(a * logit + b), fitted on held-out runs.
         self.win_scale = nn.Parameter(torch.ones(1), requires_grad=False)
         self.win_shift = nn.Parameter(torch.zeros(1), requires_grad=False)
@@ -109,12 +110,17 @@ class TypedDecisionNet(nn.Module):
         logits = self.option_mlp(torch.cat([ctx, feats], dim=-1)).squeeze(-1)
         return logits.masked_fill(acts < 0, -1e9)
 
+    def option_log_probs(self, logits: torch.Tensor, calibrated: bool = True) -> torch.Tensor:
+        if calibrated:
+            logits = logits / torch.exp(self.option_log_temperature)
+        return torch.log_softmax(logits, dim=-1)
+
     def decode_options(self, obs: dict[str, torch.Tensor], actions: list[int], feats: np.ndarray) -> tuple[int, float]:
         """Best of the offered options and its (softmax) confidence."""
         h = self.body(self.features(obs))
         f = torch.as_tensor(feats, dtype=torch.float32)[None]
         a = torch.as_tensor(actions, dtype=torch.long)[None]
-        probs = torch.softmax(self.option_scores(h, f, a)[0], dim=-1)
+        probs = self.option_log_probs(self.option_scores(h, f, a))[0].exp()
         best = int(probs.argmax())
         return actions[best], float(probs[best])
 
@@ -168,7 +174,7 @@ def expected_calibration_error(conf: np.ndarray, correct: np.ndarray, bins: int 
 def fit_temperature(logits: torch.Tensor, mask: torch.Tensor, targets: torch.Tensor) -> float:
     """Temperature that minimises the masked NLL on held-out decisions."""
     best_t, best_nll = 1.0, math.inf
-    for t in np.exp(np.linspace(math.log(0.25), math.log(8.0), 60)):
+    for t in np.exp(np.linspace(math.log(0.1), math.log(8.0), 60)):
         lp = torch.log_softmax((logits / float(t)).masked_fill(~mask.bool(), -1e9), dim=-1)
         nll = -lp.gather(1, targets[:, None]).mean().item()
         if nll < best_nll:

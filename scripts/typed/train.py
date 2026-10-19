@@ -150,21 +150,35 @@ def main() -> None:
     # Calibration on held-out runs.
     net.eval()
     logits_all, mask_all, act_all, win_all, won_all = [], [], [], [], []
+    opt_logits, opt_mask, opt_label = [], [], []
     with torch.no_grad():
-        for obs, mask, action, won, *_ in batches(data, val_idx, args.batch, obs_keys, False, rng):
-            logits, win_logit = net(obs)
+        for obs, mask, action, won, _k, _s, _z, oa, of, ol in batches(
+            data, val_idx, args.batch, obs_keys, False, rng
+        ):
+            h = net.body(net.features(obs))
+            logits, win_logit = net.action_head(h), net.win_head(h).squeeze(-1)
             logits_all.append(logits)
             mask_all.append(mask)
             act_all.append(action)
             win_all.append(win_logit)
             won_all.append(won)
+            offered = ol >= 0
+            if offered.any():
+                opt_logits.append(net.option_scores(h[offered], of[offered], oa[offered]))
+                opt_mask.append(oa[offered] >= 0)
+                opt_label.append(ol[offered])
     temp = fit_temperature(torch.cat(logits_all), torch.cat(mask_all), torch.cat(act_all))
     net.log_temperature.data = torch.tensor([np.log(temp)], dtype=torch.float32)
+    opt_temp = 1.0
+    if opt_logits:
+        opt_temp = fit_temperature(torch.cat(opt_logits), torch.cat(opt_mask), torch.cat(opt_label))
+        net.option_log_temperature.data = torch.tensor([np.log(opt_temp)], dtype=torch.float32)
     a, b = fit_platt(torch.cat(win_all), torch.cat(won_all))
     net.win_scale.data = torch.tensor([a], dtype=torch.float32)
     net.win_shift.data = torch.tensor([b], dtype=torch.float32)
     metrics = evaluate(net, data, val_idx, args.batch, obs_keys)
     metrics["temperature"] = temp
+    metrics["option_temperature"] = opt_temp
     metrics["win_platt"] = [a, b]
     print(json.dumps(metrics, indent=1))
 
@@ -194,7 +208,7 @@ def evaluate(net: TypedDecisionNet, data: dict, idx: np.ndarray, batch: int, obs
             logits, win_logit = net.action_head(h), net.win_head(h).squeeze(-1)
             offered = ol >= 0
             if offered.any():
-                op = torch.softmax(net.option_scores(h[offered], of[offered], oa[offered]), dim=-1)
+                op = net.option_log_probs(net.option_scores(h[offered], of[offered], oa[offered])).exp()
                 hit = op.argmax(dim=1) == ol[offered]
                 opt_hits += int(hit.sum())
                 opt_n += int(offered.sum())
