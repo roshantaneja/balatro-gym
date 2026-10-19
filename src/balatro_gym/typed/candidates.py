@@ -34,9 +34,24 @@ def _encode(env, engine_idxs: tuple[int, ...], kind: str) -> int | None:
     return (codec.PLAY_BASE if kind == "play" else codec.DISCARD_BASE) + sidx
 
 
+def _pad_to_five(run, idxs: tuple[int, ...]) -> tuple[int, ...] | None:
+    """Fill a play up to five cards with the lowest cards not already in it."""
+    cards = run.round.hand
+    extra = sorted((i for i in range(len(cards)) if i not in idxs), key=lambda i: int(cards[i].rank))
+    out = tuple(sorted(idxs + tuple(extra[: 5 - len(idxs)])))
+    return out if len(out) == 5 else None
+
+
 def round_options(env, mask: np.ndarray) -> tuple[list[int], np.ndarray]:
     """(action indices, feature matrix [n, OPTION_FEATS]) for the current round."""
-    from balatro_gym.env.planner import _best_plays, _draw_discards, _simple_discard, _with_fillers
+    from balatro_gym.env.planner import (
+        _best_plays,
+        _draw_discards,
+        _engine_candidates,
+        _legal_play,
+        _simple_discard,
+        _with_fillers,
+    )
 
     run = env.run
     rnd = run.round
@@ -77,7 +92,11 @@ def round_options(env, mask: np.ndarray) -> tuple[list[int], np.ndarray]:
         actions.append(action)
         feats.append(f)
 
-    for _score, idxs in _best_plays(run, 8):
+    plays = _best_plays(run, 8)
+    if not plays:  # a boss forbids every structural play (The Psychic: five cards only)
+        plays = [(0.0, _pad_to_five(run, idxs)) for _, idxs in _engine_candidates(run, 8)]
+        plays = [(s, idxs) for s, idxs in plays if idxs is not None and _legal_play(run, idxs)]
+    for _score, idxs in plays:
         add(_encode(env, idxs, "play"), idxs, "play")
         padded = _with_fillers(run, tuple(sorted(idxs)))
         if padded != tuple(sorted(idxs)):
