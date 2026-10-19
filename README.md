@@ -186,16 +186,17 @@ what a player can see (score against what the blind still needs, hand type
 and level, cards scoring, hands and discards left), and scores them. Naming
 one of 1,585 play subsets directly was the first version's weak point.
 
-Results (200 planner runs plus one DAgger round of 100 runs, where the
-model drives half the steps and the planner labels every state; held-out
-runs for validation; play on 60 unseen seeds):
+Results (200 planner runs plus two DAgger rounds of 100 runs each, where
+the model drives half the steps and the planner labels every state: 500
+runs, 55,129 decisions; held-out runs for validation; play on 60 unseen
+seeds):
 
-| held-out exact match with the planner | blind select 89% · shop 57% · pack 80% · in-round option 75% (flat 3,519-way answer: 19%) |
+| held-out exact match with the planner | blind select 92% · shop 57% · pack 77% · in-round option 75% (flat 3,519-way answer: 20%) |
 |---|---|
-| action confidence calibration (ECE) | 0.03 (flat answer) · 0.12 (option answer, underconfident) |
-| win forecast | Brier 0.19 at a 0.30 base rate: calibrated, weakly informative |
-| model plays every phase | 1.7% wins (1/60), mean ante 3.5 (first version: 0%, 1.0) |
-| model answers shop/blind/pack, planner plays rounds | 1.7% wins, mean ante 4.3 (planner alone: 20%, 6.2) |
+| action confidence calibration (ECE) | 0.03 (flat answer) · 0.10 (option answer, underconfident) |
+| win forecast | Brier 0.17 at a 0.25 base rate: calibrated, weakly informative |
+| model plays every phase | 1.7% wins (1/60), mean ante 3.4 (first version: 0%, 1.0; unchanged by the second DAgger round) |
+| model answers shop/blind/pack, planner plays rounds | 1.7% wins, mean ante 4.3 after the first DAgger round (planner alone: 20%, 6.2) |
 
 The option answer fixed the in-round play (mean ante 1.0 to 3.5 playing
 alone); the shop answers are now the bottleneck: with the planner playing
