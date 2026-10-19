@@ -1,0 +1,64 @@
+"""TypedModelAgent: answers the typed questions for a live env and plays it."""
+
+from __future__ import annotations
+
+import numpy as np
+
+from .questions import NEXT_ACTION, WILL_WIN, Answer, describe_action
+
+
+class TypedModelAgent:
+    """Loads a checkpoint from `scripts/typed/train.py`.
+
+    `ask(env, obs, mask)` returns one `Answer` per question (the next action
+    with its calibrated confidence, and the win probability); `act` is the
+    baseline-style interface used by `balatro_gym.env.eval.evaluate`.
+    """
+
+    def __init__(self, path: str, sample: bool = False, seed: int = 0):
+        import torch
+
+        from balatro_gym.content import load_all
+        from balatro_gym.env.obs.encoder import ObsEncoder
+
+        from .model import TypedDecisionNet
+
+        load_all()  # the encoder's ID vocabularies are the content registries
+        ckpt = torch.load(path, map_location="cpu", weights_only=False)
+        cfg = ckpt["config"]
+        self.net = TypedDecisionNet(ObsEncoder().space(), cfg["n_actions"], cfg["hidden"], cfg["emb"])
+        self.net.load_state_dict(ckpt["state_dict"])
+        self.net.eval()
+        self.sample = sample
+        self.rng = np.random.default_rng(seed)
+        self.metrics = ckpt.get("metrics", {})
+
+    def _probs(self, obs, mask: np.ndarray):
+        import torch
+
+        from .model import obs_to_tensors
+
+        with torch.no_grad():
+            logits, win_logit = self.net(obs_to_tensors(obs))
+            lp = self.net.masked_log_probs(logits, torch.as_tensor(mask)[None])
+            return lp.exp()[0].numpy(), float(torch.sigmoid(win_logit)[0])
+
+    def ask(self, env, obs, mask: np.ndarray) -> dict[str, Answer]:
+        probs, p_win = self._probs(obs, mask)
+        idx = int(np.argmax(probs))
+        return {
+            NEXT_ACTION.name: Answer(NEXT_ACTION.name, idx, float(probs[idx]), describe_action(env, idx)),
+            WILL_WIN.name: Answer(WILL_WIN.name, p_win >= 0.5, p_win if p_win >= 0.5 else 1 - p_win,
+                                  f"P(win) = {p_win:.2f}"),
+        }
+
+    def act(self, env, obs, mask: np.ndarray) -> int:
+        probs, _ = self._probs(obs, mask)
+        if self.sample:
+            probs = probs * mask
+            probs = probs / probs.sum() if probs.sum() > 0 else mask / mask.sum()
+            return int(self.rng.choice(len(probs), p=probs))
+        idx = int(np.argmax(probs))
+        if not mask[idx]:
+            idx = int(np.flatnonzero(mask)[0])
+        return idx
